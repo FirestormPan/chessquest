@@ -904,6 +904,26 @@ function App() {
               </div>
             )}
 
+              {pointerDrag?.moved && pointerDrag.piece && (
+                <div
+                  className="piece dragged-piece"
+                  style={{
+                    left: pointerDrag.clientX,
+                    top: pointerDrag.clientY,
+                  }}
+                >
+                  <PieceVisual
+                    color={pointerDrag.piece.color}
+                    type={pointerDrag.piece.type}
+                  />
+                </div>
+              )}
+
+
+
+
+
+
             <div className="board-layout">
               <div className="rank-labels" aria-hidden="true">
                 {boardRanks.map((rank) => (
@@ -969,7 +989,7 @@ function App() {
                   { 
                     capturedPieces.b.map((piece, index) => (
                       <span className="captured-piece" key={`${piece}-${index}`}>
-                        <PieceVisual color="w" type={piece} />
+                        <PieceVisual color="b" type={piece} />
                       </span>
                     ))
                   }
@@ -986,7 +1006,7 @@ function App() {
                   {
                     capturedPieces.w.map((piece, index) => (
                       <span className="captured-piece" key={`${piece}-${index}`}>
-                        <PieceVisual color="b" type={piece} />
+                        <PieceVisual color="w" type={piece} />
                       </span>
                     ))
                   }
