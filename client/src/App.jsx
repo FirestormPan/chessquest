@@ -273,6 +273,7 @@ function App() {
   const [playerColor, setPlayerColor] = useState(null);
   const [socketReady, setSocketReady] = useState(false);
   const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
+  const [rightRailView, setRightRailView] = useState('game');
   const [clockSnapshot, setClockSnapshot] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [promotionChoice, setPromotionChoice] = useState(null);
@@ -860,6 +861,23 @@ function App() {
           )}
         </div>
 
+        <div className="account-panel" aria-label="Right rail view">
+          <button className="account-button secondary" type="button" onClick={() => setRightRailView('hello')}>
+            Show hello
+          </button>
+          <button className="account-button secondary" type="button" onClick={() => setRightRailView('game')}>
+            Show game and chat
+          </button>
+          <button
+            className="account-button secondary"
+            type="button"
+            onClick={() => setRightRailView('out-of-game')}
+            disabled={Boolean(gameStatus==='Game in progress' || gameStatus==='Searching for an opponent...')}
+          >
+            Out of game
+          </button>
+        </div>
+
         {gameStatus && (
           <p className="game-status" aria-live="polite">
             {gameStatus}
@@ -970,116 +988,226 @@ function App() {
 
 
       <aside className="right-rail" aria-label="Game controls and chat">
-        {clockSnapshot?.wtime != null && clockSnapshot?.btime != null && (
-          <div className="clock-panel" aria-label="Time remaining">
-            <div className={`clock-card ${clockSnapshot.turn === 'w' ? 'active' : ''} ${whiteTime < 30000 ? 'low-time' : ''}`}>
-              <span className="clock-player">White</span>
-              <strong>{formatClock(whiteTime)}</strong>
-              <div className="capture-group">
-                <div className="capture-pieces">
-                  { 
-                    capturedPieces.b.map((piece, index) => (
-                      <span className="captured-piece" key={`${piece}-${index}`}>
-                        <PieceVisual color="b" type={piece} />
-                      </span>
-                    ))
-                  }
+  {(() => {
+    switch (rightRailView) {
+      case 'hello':
+        return <div>hello</div>;
+
+      case 'out-of-game':
+        return <div>out of game</div>;
+
+      default:
+        return (
+          <>
+            {clockSnapshot?.wtime != null &&
+              clockSnapshot?.btime != null && (
+                <div className="clock-panel" aria-label="Time remaining">
+                  <div
+                    className={`clock-card ${
+                      clockSnapshot.turn === 'w' ? 'active' : ''
+                    } ${whiteTime < 30000 ? 'low-time' : ''}`}
+                  >
+                    <span className="clock-player">White</span>
+                    <strong>{formatClock(whiteTime)}</strong>
+
+                    <div className="capture-group">
+                      <div className="capture-pieces">
+                        {capturedPieces.b.map((piece, index) => (
+                          <span
+                            className="captured-piece"
+                            key={`${piece}-${index}`}
+                          >
+                            <PieceVisual color="b" type={piece} />
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`clock-card ${
+                      clockSnapshot.turn === 'b' ? 'active' : ''
+                    } ${blackTime < 30000 ? 'low-time' : ''}`}
+                  >
+                    <span className="clock-player">Black</span>
+                    <strong>{formatClock(blackTime)}</strong>
+
+                    <div className="capture-group">
+                      <div className="capture-pieces">
+                        {capturedPieces.w.map((piece, index) => (
+                          <span
+                            className="captured-piece"
+                            key={`${piece}-${index}`}
+                          >
+                            <PieceVisual color="w" type={piece} />
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div className={`clock-card ${clockSnapshot.turn === 'b' ? 'active' : ''} ${blackTime < 30000 ? 'low-time' : ''}`}>
-              <span className="clock-player">Black</span>
-              <span>
+              )}
 
-              <strong>{formatClock(blackTime)}</strong>
-              <div className="capture-group">
-                <div className="capture-pieces">
-                  {
-                    capturedPieces.w.map((piece, index) => (
-                      <span className="captured-piece" key={`${piece}-${index}`}>
-                        <PieceVisual color="w" type={piece} />
-                      </span>
-                    ))
-                  }
+            <div className="game-actions" aria-label="Game actions">
+              <button
+                className="account-button"
+                type="button"
+                onClick={matchmaking ? handleCancel : handlePlay}
+                disabled={
+                  !socketReady ||
+                  cancellingMatchmaking ||
+                  (!matchmaking && Boolean(gameId))
+                }
+              >
+                {cancellingMatchmaking
+                  ? 'Cancelling...'
+                  : matchmaking
+                    ? 'Cancel'
+                    : gameId
+                      ? 'Playing'
+                      : socketReady
+                        ? 'Play'
+                        : 'Connecting...'}
+              </button>
+
+              {gameId && (
+                <>
+                  <button
+                    className="account-button"
+                    type="button"
+                    onClick={handleDraw}
+                  >
+                    {drawOffer
+                      ? 'Accept draw'
+                      : drawPending
+                        ? 'Draw offered'
+                        : 'Offer draw'}
+                  </button>
+
+                  <button
+                    className="account-button danger"
+                    type="button"
+                    onClick={handleResign}
+                  >
+                    Resign
+                  </button>
+                </>
+              )}
+            </div>
+
+            <aside className="chat-panel" aria-label="Lichess game chat">
+              <div className="chat-header">
+                <div>
+                  <span className="chat-kicker">Lichess</span>
+                  <h2>Game chat</h2>
                 </div>
+
+                <label className="chat-room-label">
+                  Room
+                  <select
+                    value={chatRoom}
+                    onChange={(event) =>
+                      setChatRoom(event.target.value)
+                    }
+                    disabled={!gameId}
+                  >
+                    {chatRooms.map((room) => (
+                      <option key={room} value={room}>
+                        {room}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
-              </span>
-            </div>
-          </div>
-        )}
 
-        <div className="game-actions" aria-label="Game actions">
-          <button
-            className="account-button"
-            type="button"
-            onClick={matchmaking ? handleCancel : handlePlay}
-            disabled={!socketReady || cancellingMatchmaking || (!matchmaking && Boolean(gameId))}
-          >
-            {cancellingMatchmaking ? 'Cancelling...' : matchmaking ? 'Cancel' : gameId ? 'Playing' : socketReady ? 'Play' : 'Connecting...'}
-          </button>
-          {gameId && (
-            <>
-              <button className="account-button" type="button" onClick={handleDraw}>
-                {drawOffer ? 'Accept draw' : drawPending ? 'Draw offered' : 'Offer draw'}
-              </button>
-              <button className="account-button danger" type="button" onClick={handleResign}>
-                Resign
-              </button>
-            </>
-          )}
-        </div>
+              <div
+                className="chat-messages"
+                ref={chatMessagesRef}
+                aria-live="polite"
+              >
+                {!gameId && (
+                  <p className="chat-empty">
+                    Join a game to chat.
+                  </p>
+                )}
 
-        <aside className="chat-panel" aria-label="Lichess game chat">
-          <div className="chat-header">
-            <div>
-              <span className="chat-kicker">Lichess</span>
-              <h2>Game chat</h2>
-            </div>
-            <label className="chat-room-label">
-              Room
-              <select value={chatRoom} onChange={(event) => setChatRoom(event.target.value)} disabled={!gameId}>
-                {chatRooms.map((room) => (
-                  <option key={room} value={room}>{room}</option>
+                {gameId && chatMessages.length === 0 && (
+                  <p className="chat-empty">
+                    No messages yet.
+                  </p>
+                )}
+
+                {chatMessages.map((message, index) => (
+                  <div
+                    className="chat-message"
+                    key={`${message.username}-${message.text}-${index}`}
+                  >
+                    <strong>{message.username}</strong>
+                    <span>{message.text}</span>
+                  </div>
                 ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="chat-messages" ref={chatMessagesRef} aria-live="polite">
-            {!gameId && <p className="chat-empty">Join a game to chat.</p>}
-            {gameId && chatMessages.length === 0 && <p className="chat-empty">No messages yet.</p>}
-            {chatMessages.map((message, index) => (
-              <div className="chat-message" key={`${message.username}-${message.text}-${index}`}>
-                <strong>{message.username}</strong>
-                <span>{message.text}</span>
               </div>
-            ))}
-          </div>
 
-          <form className="chat-form" onSubmit={handleChatSubmit}>
-            <label className="sr-only" htmlFor="chat-message">Chat message</label>
-            <input
-              id="chat-message"
-              type="text"
-              value={chatText}
-              maxLength={140}
-              placeholder={gameId ? 'Write a message' : 'Join a game first'}
-              disabled={!gameId || !socketReady}
-              onChange={(event) => {
-                setChatText(event.target.value);
-                if (chatError) setChatError('');
-              }}
-            />
-            <button className="chat-send" type="submit" disabled={!gameId || !socketReady || !chatText.trim()} aria-label="Send chat message">
-              Send
-            </button>
-          </form>
-          <div className="chat-footer">
-            <span>{chatText.length}/140</span>
-            {chatError && <span className="chat-error" role="alert">{chatError}</span>}
-          </div>
-        </aside>
-      </aside>
+              <form
+                className="chat-form"
+                onSubmit={handleChatSubmit}
+              >
+                <label
+                  className="sr-only"
+                  htmlFor="chat-message"
+                >
+                  Chat message
+                </label>
+
+                <input
+                  id="chat-message"
+                  type="text"
+                  value={chatText}
+                  maxLength={140}
+                  placeholder={
+                    gameId
+                      ? 'Write a message'
+                      : 'Join a game first'
+                  }
+                  disabled={!gameId || !socketReady}
+                  onChange={(event) => {
+                    setChatText(event.target.value);
+                    if (chatError) setChatError('');
+                  }}
+                />
+
+                <button
+                  className="chat-send"
+                  type="submit"
+                  disabled={
+                    !gameId ||
+                    !socketReady ||
+                    !chatText.trim()
+                  }
+                  aria-label="Send chat message"
+                >
+                  Send
+                </button>
+              </form>
+
+              <div className="chat-footer">
+                <span>{chatText.length}/140</span>
+
+                {chatError && (
+                  <span
+                    className="chat-error"
+                    role="alert"
+                  >
+                    {chatError}
+                  </span>
+                )}
+              </div>
+            </aside>
+          </>
+        );
+    }
+  })()}
+</aside>
     </main>
   );
 }
