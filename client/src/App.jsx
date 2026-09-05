@@ -166,16 +166,7 @@ function ChessSquare({
       {piece && (
         <span
           className={`piece ${draggingSquare === square ? 'is-dragging' : ''}`}
-          role="button"
-          tabIndex={0}
-          aria-label={`Select ${piece.color === 'w' ? 'white' : 'black'} piece on ${square}`}
           onClick={(event) => onPieceClick(event, square)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              onSquareClick(square);
-            }
-          }}
           onPointerDown={(event) => onPointerDown(event, square)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -282,15 +273,6 @@ function App() {
   const [playerColor, setPlayerColor] = useState(null);
   const [socketReady, setSocketReady] = useState(false);
   const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
-                  {pointerDrag?.moved && pointerDrag.piece && (
-                    <div
-                      className="drag-ghost"
-                      style={{ left: `${pointerDrag.clientX}px`, top: `${pointerDrag.clientY}px` }}
-                      aria-hidden="true"
-                    >
-                      <PieceVisual color={pointerDrag.piece.color} type={pointerDrag.piece.type} />
-                    </div>
-                  )}
   const [clockSnapshot, setClockSnapshot] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [promotionChoice, setPromotionChoice] = useState(null);
@@ -686,6 +668,16 @@ function App() {
   }
 
   function selectSquare(square) {
+    const piece = game.get(square);
+    if (gameId && (
+      !piece
+      || piece.color !== playerColor
+      || game.turn() !== playerColor
+    )) {
+      clearSelection();
+      return;
+    }
+
     const moves = getLegalMovesForPiece(fen, square);
     if (moves.length === 0) {
       clearSelection();
@@ -746,7 +738,6 @@ function App() {
 
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) {
-        if (shouldAnimate) animateMove(from, to, movingPiece);
         setDrawOffer(false);
         socket.send(JSON.stringify({
           type: 'game.move',
