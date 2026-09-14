@@ -22,11 +22,16 @@ const pieceNames = {
   q: 'queen',
   k: 'king',
 };
-const chatRooms = ['player', 'spectator'];
 
-function PieceVisual({ color, type, className = '' }) {
-  const imagePath = `/${color === 'w' ? 'white' : 'black'}/${pieceNames[type]}.png`;
+
+function PieceVisual({ color, type, skinFolder, className = '' }) {
   const [failedImagePath, setFailedImagePath] = useState(null);
+
+  if (!skinFolder) {
+    return <span className={className}>{pieceSymbols[color][type]}</span>;
+  }
+
+  const imagePath = `/${skinFolder}/${pieceNames[type]}.png`;
   const hasImage = failedImagePath !== imagePath;
 
   return hasImage ? (
@@ -146,6 +151,7 @@ function ChessSquare({
   onPointerUp,
   onPointerCancel,
   isLastMove,
+  skinFolder,
 }) {
   return (
     <button
@@ -172,7 +178,7 @@ function ChessSquare({
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
         >
-          <PieceVisual color={piece.color} type={piece.type} />
+          <PieceVisual color={piece.color} type={piece.type} skinFolder={skinFolder} />
         </span>
       )}
     </button>
@@ -198,7 +204,12 @@ function ChessBoard({
   moveAnimation,
   onMoveAnimationEnd,
   pointerDrag,
+  skinFolder,
+  playerColor,
+  opponentSkinFolder,
 }) {
+  const skinColor = playerColor ?? 'w';
+
   return (
     <div className="board" role="grid" aria-label="Interactive chessboard" onClick={onBoardClick}>
       {boardRanks.flatMap((rank, rankIndex) =>
@@ -225,6 +236,7 @@ function ChessBoard({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerCancel}
               isLastMove={isLastMove}
+              skinFolder={piece?.color === skinColor ? skinFolder : opponentSkinFolder}
             />
           );
         }),
@@ -240,7 +252,11 @@ function ChessBoard({
           onTransitionEnd={onMoveAnimationEnd}
           aria-hidden="true"
         >
-          <PieceVisual color={moveAnimation.piece.color} type={moveAnimation.piece.type} />
+          <PieceVisual
+            color={moveAnimation.piece.color}
+            type={moveAnimation.piece.type}
+            skinFolder={moveAnimation.piece.color === skinColor ? skinFolder : opponentSkinFolder}
+          />
         </div>
       )}
     </div>
@@ -274,6 +290,10 @@ function App() {
   const [socketReady, setSocketReady] = useState(false);
   const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
   const [rightRailView, setRightRailView] = useState('game');
+  const [skinFolders, setSkinFolders] = useState([]);
+  const [selectedSkinFolder, setSelectedSkinFolder] = useState('white');
+  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState(null);
+  const [selectingOpponentSkin, setSelectingOpponentSkin] = useState(false);
   const [clockSnapshot, setClockSnapshot] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [promotionChoice, setPromotionChoice] = useState(null);
@@ -282,10 +302,11 @@ function App() {
   const [drawPending, setDrawPending] = useState(false);
   const drawPendingRef = useRef(false);
   const [chatMessages, setChatMessages] = useState([]);
-  const [chatRoom, setChatRoom] = useState('player');
   const [chatText, setChatText] = useState('');
   const [chatError, setChatError] = useState('');
   const chatMessagesRef = useRef(null);
+  const [moveHistory, setMoveHistory] = useState([]);
+
 
   const game = new Chess(fen);
   const boardFiles = playerColor === 'b' ? [...files].reverse() : files;
@@ -293,6 +314,39 @@ function App() {
   const elapsed = clockSnapshot?.status === 'started' ? clockNow - clockSnapshot.updatedAt : 0;
   const whiteTime = clockSnapshot?.wtime == null ? 0 : clockSnapshot.wtime - (clockSnapshot.turn === 'w' ? elapsed : 0);
   const blackTime = clockSnapshot?.btime == null ? 0 : clockSnapshot.btime - (clockSnapshot.turn === 'b' ? elapsed : 0);
+
+  function getSkinFolderForColor(color) {
+    const skinColor = playerColor ?? 'w';
+    return color === skinColor ? selectedSkinFolder : selectedOpponentSkinFolder;
+  }
+
+  function selectSkinFolder(folder) {
+  if (selectingOpponentSkin) {
+    // Clicking the already-selected opponent skin deselects it.
+    if (selectedOpponentSkinFolder === folder) {
+      setSelectedOpponentSkinFolder(null);
+      return;
+    }
+
+    // A skin selected for the player cannot be selected for the opponent.
+    if (selectedSkinFolder === folder) return;
+
+    setSelectedOpponentSkinFolder(folder);
+    return;
+  }
+
+  // Clicking the already-selected player skin deselects it.
+  if (selectedSkinFolder === folder) {
+    setSelectedSkinFolder(null);
+    return;
+  }
+
+  // A skin selected for the opponent cannot be selected for the player.
+  if (selectedOpponentSkinFolder === folder) return;
+
+  setSelectedSkinFolder(folder);
+}
+
 
   function clearSelection() {
     selectedSquareRef.current = null;
@@ -348,9 +402,39 @@ function App() {
     if (!gameId || !text || text.length > 140 || socketRef.current?.readyState !== WebSocket.OPEN) return;
 
     setChatError('');
-    socketRef.current.send(JSON.stringify({ type: 'game.chat', gameId, room: chatRoom, text }));
+    socketRef.current.send(JSON.stringify({ type: 'game.chat', gameId, room: 'player', text }));
     setChatText('');
   }
+
+  function parseUciMoves(moves) {
+  if (Array.isArray(moves)) {
+    return moves.filter(Boolean);
+  }
+
+  return (moves ?? '').trim().split(/\s+/).filter(Boolean);
+  }
+
+  function getMoveHistory(fen, moves) {
+    const chess = new Chess(normalizeFen(fen));
+    const history = [];
+
+    for (const uci of parseUciMoves(moves)) {
+      try {
+        const move = chess.move(makeMoveFromUci(uci));
+
+        history.push({
+          number: Math.ceil(history.length / 2) + 1,
+          color: move.color,
+          san: move.san,
+        });
+      } catch {
+        break;
+      }
+    }
+
+    return history;
+  }
+
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -358,6 +442,19 @@ function App() {
       .then((data) => setAccount(data?.account ?? null))
       .catch(() => setAccount(null))
       .finally(() => setAuthLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/skins')
+      .then((response) => (response.ok ? response.json() : { skins: [] }))
+      .then((data) => {
+        const folders = Array.isArray(data.skins) ? data.skins : [];
+        setSkinFolders(folders);
+        if (folders.length && !folders.includes(selectedSkinFolder)) {
+          setSelectedSkinFolder(folders[0]);
+        }
+      })
+      .catch(() => setSkinFolders([]));
   }, []);
 
   useEffect(() => {
@@ -480,6 +577,8 @@ function App() {
         const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
         const nextFen = applyLichessMoves(event.initialFen, event.state.moves);
         const moves = parseUciMoves(event.state.moves);
+        setMoveHistory(getMoveHistory(event.initialFen, event.state.moves));
+
         const lastUciMove = moves[moves.length - 1];
         moveCountRef.current = moves.length;
 
@@ -516,7 +615,7 @@ function App() {
         return;
       }
 
-      if (event.type === 'gameState' && initialFenRef.current) {
+  if (event.type === 'gameState' && initialFenRef.current) {
   const nextFen = applyLichessMoves(
     initialFenRef.current,
     event.moves
@@ -541,6 +640,12 @@ function App() {
     }
     setDrawOffer(Boolean(opponentDrawOffer));
   }
+
+  setMoveHistory(
+    getMoveHistory(initialFenRef.current, event.moves)
+  );
+
+
 
   setLastMove(
     lastUciMove
@@ -863,7 +968,7 @@ function App() {
 
         <div className="account-panel" aria-label="Right rail view">
           <button className="account-button secondary" type="button" onClick={() => setRightRailView('hello')}>
-            Show hello
+            Select Skin
           </button>
           <button className="account-button secondary" type="button" onClick={() => setRightRailView('game')}>
             Show game and chat
@@ -872,7 +977,7 @@ function App() {
             className="account-button secondary"
             type="button"
             onClick={() => setRightRailView('out-of-game')}
-            disabled={Boolean(gameStatus==='Game in progress' || gameStatus==='Searching for an opponent...')}
+            disabled={Boolean(gameStatus=='Game in progress' || gameStatus=='Searching for an opponent...')}
           >
             Out of game
           </button>
@@ -907,7 +1012,12 @@ function App() {
                     }}
                     aria-label={`Promote pawn to ${getPromotionLabel(pieceType)}`}
                   >
-                    <PieceVisual color={promotionChoice.color} type={pieceType} className="promotion-piece" />
+                    <PieceVisual
+                      color={promotionChoice.color}
+                      type={pieceType}
+                      skinFolder={getSkinFolderForColor(promotionChoice.color)}
+                      className="promotion-piece"
+                    />
                   </button>
                 ))}
               </div>
@@ -924,6 +1034,7 @@ function App() {
                   <PieceVisual
                     color={pointerDrag.piece.color}
                     type={pointerDrag.piece.type}
+                    skinFolder={getSkinFolderForColor(pointerDrag.piece.color)}
                   />
                 </div>
               )}
@@ -964,6 +1075,9 @@ function App() {
                   moveAnimation={moveAnimation}
                   onMoveAnimationEnd={finishMoveAnimation}
                   pointerDrag={pointerDrag}
+                  skinFolder={selectedSkinFolder}
+                  playerColor={playerColor}
+                  opponentSkinFolder={selectedOpponentSkinFolder}
                 />
 
                 <div className="file-labels" aria-hidden="true">
@@ -991,7 +1105,56 @@ function App() {
   {(() => {
     switch (rightRailView) {
       case 'hello':
-        return <div>hello</div>;
+        return (
+          <div className="skin-picker" aria-label="Choose a piece skin">
+            <div className="skin-picker-heading">
+              <span className="chat-kicker">Piece skins</span>
+              <h2>Choose a set</h2>
+              <label className="skin-opponent-toggle">
+                <input
+                  type="checkbox"
+                  checked={selectingOpponentSkin}
+                  onChange={(event) => setSelectingOpponentSkin(event.target.checked)}
+                />
+                Select for opponent
+              </label>
+            </div>
+            <div className="skin-options">
+              {skinFolders.map((folder) => (
+                <button
+                  className={`skin-option ${
+                    selectedSkinFolder === folder
+                      ? 'selected player-selected'
+                      : ''
+                  } ${
+                    selectedOpponentSkinFolder === folder
+                      ? 'selected opponent-selected'
+                      : ''
+                  }`}
+                  key={folder}
+                  type="button"
+                  onClick={() => selectSkinFolder(folder)}
+                  disabled={
+                    (selectingOpponentSkin && selectedSkinFolder === folder) ||
+                    (!selectingOpponentSkin && selectedOpponentSkinFolder === folder)
+                  }
+                  aria-label={
+                    selectedSkinFolder === folder
+                      ? `${folder} selected for player`
+                      : selectedOpponentSkinFolder === folder
+                        ? `${folder} selected for opponent`
+                        : `Equip ${folder} piece skin`
+                  }
+                >
+                  <img src={`/${folder}/king.png`} alt={`${folder} king skin`} />
+                  <span>{folder}</span>
+                </button>
+
+              ))}
+            </div>
+            {!skinFolders.length && <p className="skin-empty">No piece skins found.</p>}
+          </div>
+        );
 
       case 'out-of-game':
         return <div>out of game</div>;
@@ -1017,7 +1180,7 @@ function App() {
                             className="captured-piece"
                             key={`${piece}-${index}`}
                           >
-                            <PieceVisual color="b" type={piece} />
+                            <PieceVisual color="b" type={piece} skinFolder={getSkinFolderForColor('b')} />
                           </span>
                         ))}
                       </div>
@@ -1039,7 +1202,7 @@ function App() {
                             className="captured-piece"
                             key={`${piece}-${index}`}
                           >
-                            <PieceVisual color="w" type={piece} />
+                            <PieceVisual color="w" type={piece} skinFolder={getSkinFolderForColor('w')} />
                           </span>
                         ))}
                       </div>
@@ -1095,119 +1258,154 @@ function App() {
               )}
             </div>
 
-            <aside className="chat-panel" aria-label="Lichess game chat">
-              <div className="chat-header">
-                <div>
-                  <span className="chat-kicker">Lichess</span>
-                  <h2>Game chat</h2>
-                </div>
+           <div className="chat-panel" aria-label="Game chat and move history">
+  <div className="chat-header">
+     <button
+      className="account-button secondary"
+      type="button"
+      onClick={() =>
+        setRightRailView((current) =>
+          current === 'history' ? 'game' : 'history'
+        )
+      }
+      aria-pressed={rightRailView === 'history'}
+    >
+      {rightRailView === 'history' ? 'Chat' : 'History'}
+    </button>
+    
+    <div>
+      <span className="chat-kicker">Lichess</span>
+      <h2>
+        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
+      </h2>
+    </div>
 
-                <label className="chat-room-label">
-                  Room
-                  <select
-                    value={chatRoom}
-                    onChange={(event) =>
-                      setChatRoom(event.target.value)
-                    }
-                    disabled={!gameId}
-                  >
-                    {chatRooms.map((room) => (
-                      <option key={room} value={room}>
-                        {room}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+  </div>
 
-              <div
-                className="chat-messages"
-                ref={chatMessagesRef}
-                aria-live="polite"
-              >
-                {!gameId && (
-                  <p className="chat-empty">
-                    Join a game to chat.
-                  </p>
-                )}
+  {rightRailView === 'history' ? (
+    <div className="move-history">
+      {moveHistory.length === 0 ? (
+        <p className="chat-empty">
+          No moves yet.
+        </p>
+      ) : (
+        moveHistory
+          .reduce((rows, move) => {
+            if (move.color === 'w') {
+              rows.push({
+                number: move.number,
+                white: move.san,
+                black: '',
+              });
+            } else if (rows.length) {
+              rows[rows.length - 1].black = move.san;
+            }
 
-                {gameId && chatMessages.length === 0 && (
-                  <p className="chat-empty">
-                    No messages yet.
-                  </p>
-                )}
+            return rows;
+          }, [])
+          .map((move) => (
+            <div className="history-row" key={move.number}>
+              <span>{move.number}.</span>
+              <span>{move.white}</span>
+              <span>{move.black}</span>
+            </div>
+          ))
+      )}
+    </div>
+  ) : (
+    <>
+      <div
+        className="chat-messages"
+        ref={chatMessagesRef}
+        aria-live="polite"
+      >
+        {!gameId && (
+          <p className="chat-empty">
+            Join a game to chat.
+          </p>
+        )}
 
-                {chatMessages.map((message, index) => (
-                  <div
-                    className="chat-message"
-                    key={`${message.username}-${message.text}-${index}`}
-                  >
-                    <strong>{message.username}</strong>
-                    <span>{message.text}</span>
-                  </div>
-                ))}
-              </div>
+        {gameId && chatMessages.length === 0 && (
+          <p className="chat-empty">
+            No messages yet.
+          </p>
+        )}
 
-              <form
-                className="chat-form"
-                onSubmit={handleChatSubmit}
-              >
-                <label
-                  className="sr-only"
-                  htmlFor="chat-message"
-                >
-                  Chat message
-                </label>
+        {chatMessages.map((message, index) => (
+          <div
+            className="chat-message"
+            key={`${message.username}-${message.text}-${index}`}
+          >
+            <strong>{message.username}</strong>
+            <span>{message.text}</span>
+          </div>
+        ))}
+      </div>
 
-                <input
-                  id="chat-message"
-                  type="text"
-                  value={chatText}
-                  maxLength={140}
-                  placeholder={
-                    gameId
-                      ? 'Write a message'
-                      : 'Join a game first'
-                  }
-                  disabled={!gameId || !socketReady}
-                  onChange={(event) => {
-                    setChatText(event.target.value);
-                    if (chatError) setChatError('');
-                  }}
-                />
+      <form
+        className="chat-form"
+        onSubmit={handleChatSubmit}
+      >
+        <label
+          className="sr-only"
+          htmlFor="chat-message"
+        >
+          Chat message
+        </label>
 
-                <button
-                  className="chat-send"
-                  type="submit"
-                  disabled={
-                    !gameId ||
-                    !socketReady ||
-                    !chatText.trim()
-                  }
-                  aria-label="Send chat message"
-                >
-                  Send
-                </button>
-              </form>
+        <input
+          id="chat-message"
+          type="text"
+          value={chatText}
+          maxLength={140}
+          placeholder={
+            gameId
+              ? 'Write a message'
+              : 'Join a game first'
+          }
+          disabled={!gameId || !socketReady}
+          onChange={(event) => {
+            setChatText(event.target.value);
+            if (chatError) setChatError('');
+          }}
+        />
 
-              <div className="chat-footer">
-                <span>{chatText.length}/140</span>
+        <button
+          className="chat-send"
+          type="submit"
+          disabled={
+            !gameId ||
+            !socketReady ||
+            !chatText.trim()
+          }
+          aria-label="Send chat message"
+        >
+          Send
+        </button>
+      </form>
 
-                {chatError && (
-                  <span
-                    className="chat-error"
-                    role="alert"
-                  >
-                    {chatError}
-                  </span>
-                )}
-              </div>
-            </aside>
-          </>
-        );
+      <div className="chat-footer">
+        <span>{chatText.length}/140</span>
+
+        {chatError && (
+          <span
+            className="chat-error"
+            role="alert"
+          >
+            {chatError}
+          </span>
+        )}
+      </div>
+    </>
+  )}
+</div>
+
+        </>
+      );
     }
   })()}
 </aside>
+
     </main>
   );
 }

@@ -133,6 +133,18 @@ h1 {
 .chat-footer { color: #758285; display: flex; font-family: 'DM Mono', monospace; font-size: 0.58rem; justify-content: space-between; min-height: 1.1rem; padding-top: 0.45rem; }
 .chat-error { color: #efaaa0; max-width: 75%; overflow-wrap: anywhere; text-align: right; }
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); }
+.skin-picker { background: rgba(13, 21, 27, 0.78); border: 1px solid rgba(169, 182, 185, 0.2); padding: 1rem; }
+.skin-picker-heading { border-bottom: 1px solid rgba(169, 182, 185, 0.18); padding-bottom: 0.9rem; }
+.skin-picker-heading h2 { color: #f3f0e8; font-size: 1.15rem; margin: 0.25rem 0 0; }
+.skin-opponent-toggle { align-items: center; color: #a9b6b9; display: flex; font-family: 'DM Mono', monospace; font-size: 0.65rem; gap: 0.45rem; margin-top: 0.8rem; }
+.skin-opponent-toggle input { accent-color: #d96b68; }
+.skin-options { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); padding-top: 1rem; }
+.skin-option { align-items: center; background: #172229; border: 1px solid rgba(169, 182, 185, 0.25); color: #d7ddda; cursor: pointer; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem 0.5rem; text-transform: capitalize; }
+.skin-option:hover, .skin-option.selected { color: #f3f0e8; }
+.skin-option.player-selected { border-color: #5b9fe8; box-shadow: 0 0 0 2px rgba(91, 159, 232, 0.22); }
+.skin-option.opponent-selected { border-color: #d96b68; box-shadow: 0 0 0 2px rgba(217, 107, 104, 0.22); }
+.skin-option img { height: 4rem; object-fit: contain; width: 4rem; }
+.skin-empty { color: #758285; font-family: 'DM Mono', monospace; font-size: 0.68rem; }
 
 .board-panel { min-width: 0; width: min(100%, 900px); }
 .board-game-area { align-items: stretch; display: flex; gap: 1rem; }
@@ -363,5 +375,5 @@ h1 {
   .clock-card { flex: 1; }
   .right-rail { width: 100%; }
   .right-rail .clock-panel { flex-direction: row; }
-  .chat-panel { height: 420px; }
+  .chat-panel { height: 420px; overflow: scroll;}
 }
