@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
+import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces,getUciHistory,getMoveHistory } from './boardRules'
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
@@ -47,63 +48,6 @@ function PieceVisual({ color, type, skinFolder, className = '' }) {
   );
 }
 
-function normalizeFen(fen) {
-  return fen === '-' || fen === 'startpos' ? undefined : fen;
-}
-
-function parseUciMoves(moves) {
-  if (Array.isArray(moves)) {
-    return moves.filter(Boolean);
-  }
-
-  return (moves ?? '').trim().split(/\s+/).filter(Boolean);
-}
-
-function makeMoveFromUci(uci) {
-  return {
-    from: uci.slice(0, 2),
-    to: uci.slice(2, 4),
-    promotion: uci[4] || undefined,
-  };
-}
-
-function getLegalMovesForPiece(fen, square) {
-  const position = new Chess(fen);
-  const piece = position.get(square);
-  if (!piece) return [];
-
-  if (piece.color === position.turn()) {
-    return position.moves({ square, verbose: true });
-  }
-
-  const fields = fen.split(' ');
-  fields[1] = piece.color;
-  return new Chess(fields.join(' ')).moves({ square, verbose: true });
-}
-
-function applyLichessMoves(initialFen, moves) {
-  const nextGame = new Chess(normalizeFen(initialFen));
-
-  for (const uci of parseUciMoves(moves)) {
-    nextGame.move(makeMoveFromUci(uci));
-  }
-
-  return nextGame.fen();
-}
-
-function getCapturedPieces(initialFen, moves) {
-  const nextGame = new Chess(normalizeFen(initialFen));
-  const captured = { w: [], b: [] };
-
-  for (const uci of parseUciMoves(moves)) {
-    const move = nextGame.move(makeMoveFromUci(uci));
-    if (move.captured) {
-      captured[move.color === 'w' ? 'b' : 'w'].push(move.captured);
-    }
-  }
-
-  return captured;
-}
 
 function getSquarePosition(square, boardFiles, boardRanks) {
   const fileIndex = boardFiles.indexOf(square[0]);
@@ -114,9 +58,6 @@ function getSquarePosition(square, boardFiles, boardRanks) {
   };
 }
 
-function getUciHistory(history) {
-  return history.map((move) => `${move.from}${move.to}${move.promotion ?? ''}`);
-}
 
 function formatClock(milliseconds) {
   const seconds = Math.max(0, milliseconds) / 1000;
@@ -406,35 +347,6 @@ function App() {
     setChatText('');
   }
 
-  function parseUciMoves(moves) {
-  if (Array.isArray(moves)) {
-    return moves.filter(Boolean);
-  }
-
-  return (moves ?? '').trim().split(/\s+/).filter(Boolean);
-  }
-
-  function getMoveHistory(fen, moves) {
-    const chess = new Chess(normalizeFen(fen));
-    const history = [];
-
-    for (const uci of parseUciMoves(moves)) {
-      try {
-        const move = chess.move(makeMoveFromUci(uci));
-
-        history.push({
-          number: Math.ceil(history.length / 2) + 1,
-          color: move.color,
-          san: move.san,
-        });
-      } catch {
-        break;
-      }
-    }
-
-    return history;
-  }
-
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -575,7 +487,7 @@ function App() {
       if (event.type === 'gameFull') {
         initialFenRef.current = event.initialFen;
         const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
-        const nextFen = applyLichessMoves(event.initialFen, event.state.moves);
+        const nextFen = applyMoves(event.initialFen, event.state.moves);
         const moves = parseUciMoves(event.state.moves);
         setMoveHistory(getMoveHistory(event.initialFen, event.state.moves));
 
@@ -616,7 +528,7 @@ function App() {
       }
 
   if (event.type === 'gameState' && initialFenRef.current) {
-  const nextFen = applyLichessMoves(
+  const nextFen = applyMoves(
     initialFenRef.current,
     event.moves
   );
@@ -921,7 +833,7 @@ function App() {
     event.currentTarget.releasePointerCapture(event.pointerId);
 
     if (pointerDrag.moved) {
-      const canMove = game.moves({ square: pointerDrag.square, verbose: true })
+      const canMove = getLegalMovesForPiece(fen, pointerDrag.square)
         .some((move) => move.to === pointerDrag.destination);
       if (canMove) makeMove(pointerDrag.square, pointerDrag.destination, '', false);
     }
@@ -1260,6 +1172,14 @@ function App() {
 
            <div className="chat-panel" aria-label="Game chat and move history">
   <div className="chat-header">
+    
+    <div>
+      <span className="chat-kicker">Lichess</span>
+      <h2>
+        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
+      </h2>
+    </div>
+
      <button
       className="account-button secondary"
       type="button"
@@ -1272,14 +1192,6 @@ function App() {
     >
       {rightRailView === 'history' ? 'Chat' : 'History'}
     </button>
-    
-    <div>
-      <span className="chat-kicker">Lichess</span>
-      <h2>
-        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
-      </h2>
-    </div>
-
   </div>
 
   {rightRailView === 'history' ? (
