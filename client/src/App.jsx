@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
-import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces,getUciHistory,getMoveHistory } from './boardRules'
+import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getUciHistory, getMoveHistory, getCheckedKingSquare } from './boardRules'
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
@@ -93,14 +93,17 @@ function ChessSquare({
   onPointerCancel,
   isLastMove,
   skinFolder,
+  isChecked
 }) {
   return (
     <button
       className={`square ${isDark ? 'dark' : 'light'} ${
-          isSelected ? 'selected' : ''
-        } ${isLegalMove ? 'legal-move' : ''} ${
-          isLastMove ? 'last-move' : ''
-        } ${piece ? 'occupied' : ''}`}
+        isSelected ? 'selected' : ''
+      } ${isLegalMove ? 'legal-move' : ''} ${
+        isLastMove ? 'last-move' : ''
+      } ${isChecked ? 'in-check' : ''} ${
+        piece ? 'occupied' : ''
+      }`}
 
       
 
@@ -148,6 +151,7 @@ function ChessBoard({
   skinFolder,
   playerColor,
   opponentSkinFolder,
+  checkedSquare
 }) {
   const skinColor = playerColor ?? 'w';
 
@@ -160,6 +164,7 @@ function ChessBoard({
           const displayedPiece = moveAnimation?.to === square ? null : piece;
           const isDark = (rankIndex + fileIndex) % 2 === 1;
           const isLastMove =  lastMove?.from === square || lastMove?.to === square;
+          const isChecked = checkedSquare === square;
 
           return (
             <ChessSquare
@@ -177,6 +182,7 @@ function ChessBoard({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerCancel}
               isLastMove={isLastMove}
+              isChecked={isChecked}
               skinFolder={piece?.color === skinColor ? skinFolder : opponentSkinFolder}
             />
           );
@@ -250,6 +256,7 @@ function App() {
 
 
   const game = new Chess(fen);
+  const checkedSquare = getCheckedKingSquare(fen);
   const boardFiles = playerColor === 'b' ? [...files].reverse() : files;
   const boardRanks = playerColor === 'b' ? [...ranks].reverse() : ranks;
   const elapsed = clockSnapshot?.status === 'started' ? clockNow - clockSnapshot.updatedAt : 0;
@@ -990,6 +997,7 @@ function App() {
                   skinFolder={selectedSkinFolder}
                   playerColor={playerColor}
                   opponentSkinFolder={selectedOpponentSkinFolder}
+                  checkedSquare={checkedSquare}
                 />
 
                 <div className="file-labels" aria-hidden="true">
@@ -1151,6 +1159,7 @@ function App() {
                     className="account-button"
                     type="button"
                     onClick={handleDraw}
+                    disabled={drawPending && !drawOffer}
                   >
                     {drawOffer
                       ? 'Accept draw'

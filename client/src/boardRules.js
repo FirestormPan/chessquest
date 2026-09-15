@@ -85,4 +85,22 @@ function getMoveHistory(fen, moves) {
     return history;
 }
 
-export { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getUciHistory, getMoveHistory };
+function getCheckedKingSquare(fen) {
+  const position = new Chess(fen);
+  if (!position.inCheck()) return null;
+
+  const turnColor = position.turn();
+  const board = position.board();
+
+  for (const row of board) {
+    for (const square of row) {
+      if (square?.type === 'k' && square.color === turnColor) {
+        return square.square;
+      }
+    }
+  }
+
+  return null;
+}
+
+export { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getUciHistory, getMoveHistory, getCheckedKingSquare };
