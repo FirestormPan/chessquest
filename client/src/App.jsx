@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo  } from 'react';
 import { Chess } from 'chess.js';
-import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getUciHistory, getMoveHistory, getCheckedKingSquare } from './boardRules'
+import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getMoveHistory, getCheckedKingSquare } from './boardRules'
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
@@ -221,6 +221,7 @@ function App() {
   const animationTimerRef = useRef(null);
 
   const [fen, setFen] = useState(() => new Chess().fen());
+  const fenRef = useRef(fen);
   const [lastMove, setLastMove] = useState(null);
   const [moveAnimation, setMoveAnimation] = useState(null);
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -238,8 +239,8 @@ function App() {
   const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
   const [rightRailView, setRightRailView] = useState('game');
   const [skinFolders, setSkinFolders] = useState([]);
-  const [selectedSkinFolder, setSelectedSkinFolder] = useState('white');
-  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState(null);
+  const [selectedSkinFolder, setSelectedSkinFolder] = useState('alteon');
+  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState('evil');
   const [selectingOpponentSkin, setSelectingOpponentSkin] = useState(false);
   const [clockSnapshot, setClockSnapshot] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -255,7 +256,7 @@ function App() {
   const [moveHistory, setMoveHistory] = useState([]);
 
 
-  const game = new Chess(fen);
+  const game = useMemo(() => new Chess(fen), [fen]);
   const checkedSquare = getCheckedKingSquare(fen);
   const boardFiles = playerColor === 'b' ? [...files].reverse() : files;
   const boardRanks = playerColor === 'b' ? [...ranks].reverse() : ranks;
@@ -519,6 +520,7 @@ function App() {
         setDrawPending(false);
         setChatMessages(Array.isArray(event.chat) ? event.chat : []);
         setChatError('');
+        fenRef.current = nextFen;
         setFen(nextFen);
         setCapturedPieces(getCapturedPieces(event.initialFen, event.state.moves));
         setClockSnapshot({
@@ -543,7 +545,8 @@ function App() {
   const moves = parseUciMoves(event.moves);
   const lastUciMove = moves[moves.length - 1];
 
-  const moveWasMade = moves.length > moveCountRef.current;
+  const newMoves = moves.slice(moveCountRef.current);
+  const moveWasMade = newMoves.length > 0;
   moveCountRef.current = moves.length;
   const ownDrawOffer = playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
   const opponentDrawOffer = playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
@@ -575,10 +578,17 @@ function App() {
       : null
   );
 
+  if (newMoves.length) {
+    const newCapturedPieces = getCapturedPieces(fenRef.current, newMoves);
+    if (newCapturedPieces.w.length || newCapturedPieces.b.length) {
+      setCapturedPieces((current) => ({
+        w: [...current.w, ...newCapturedPieces.w],
+        b: [...current.b, ...newCapturedPieces.b],
+      }));
+    }
+  }
+  fenRef.current = nextFen;
   setFen(nextFen);
-  setCapturedPieces(
-    getCapturedPieces(initialFenRef.current, event.moves)
-  );
   if (selectedSquareRef.current) {
     const updatedMoves = getLegalMovesForPiece(nextFen, selectedSquareRef.current);
     if (updatedMoves.length > 0) {
@@ -628,7 +638,9 @@ function App() {
       return;
     }
 
-    setFen(new Chess().fen());
+    const newGame = new Chess();
+    fenRef.current = newGame.fen();
+    setFen(fenRef.current);
     setCapturedPieces({ w: [], b: [] });
     setClockSnapshot(null);
     initialFenRef.current = null;
@@ -784,14 +796,28 @@ function App() {
         from: playedMove.from,
         to: playedMove.to,
       });
-      setFen(nextGame.fen());
-      setCapturedPieces(getCapturedPieces('-', getUciHistory(nextGame.history({ verbose: true }))));
+      fenRef.current = nextGame.fen();
+      setFen(fenRef.current);
+
+      //calculate captured pieces and update state (derived)
+      if (playedMove.captured) {
+        setCapturedPieces((current) => ({
+          ...current,
+          [playedMove.color === 'w' ? 'b' : 'w']: [
+            ...current[playedMove.color === 'w' ? 'b' : 'w'],
+            playedMove.captured,
+          ],
+        }));
+      }
+
       closePromotionChoice();
       clearSelection();
     } catch {
       closePromotionChoice();
       clearSelection();
     }
+
+
   }
 
   function handlePromotionChoice(pieceType) {
@@ -896,7 +922,7 @@ function App() {
             className="account-button secondary"
             type="button"
             onClick={() => setRightRailView('out-of-game')}
-            disabled={Boolean(gameStatus=='Game in progress' || gameStatus=='Searching for an opponent...')}
+            disabled={Boolean(gameStatus=='Game in progress' || gameStatus=='Searching for an opponent...' || gameStatus=='Draw offered')}
           >
             Out of game
           </button>
@@ -1054,10 +1080,7 @@ function App() {
                   key={folder}
                   type="button"
                   onClick={() => selectSkinFolder(folder)}
-                  disabled={
-                    (selectingOpponentSkin && selectedSkinFolder === folder) ||
-                    (!selectingOpponentSkin && selectedOpponentSkinFolder === folder)
-                  }
+                  disabled={ selectingOpponentSkin ? selectedSkinFolder === folder : selectedOpponentSkinFolder === folder }
                   aria-label={
                     selectedSkinFolder === folder
                       ? `${folder} selected for player`
@@ -1226,9 +1249,9 @@ function App() {
           }, [])
           .map((move) => (
             <div className="history-row" key={move.number}>
-              <span>{move.number}.</span>
+              <span>{move.number}. </span>
               <span>{move.white}</span>
-              <span>{move.black}</span>
+              <span> | {move.black}</span>
             </div>
           ))
       )}

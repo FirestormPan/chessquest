@@ -382,3 +382,9 @@ h1 {
   .right-rail .clock-panel { flex-direction: row; }
   .chat-panel { height: 420px; overflow: scroll;}
 }
+
+
+.move-history{
+  overflow:scroll;
+  overflow-x:hidden;
+}
