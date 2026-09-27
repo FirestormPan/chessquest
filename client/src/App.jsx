@@ -430,6 +430,10 @@ function App() {
   const [drawPending, setDrawPending] = useState(false);
   const drawPendingRef = useRef(false);
 
+  const [opponentGone, setOpponentGone] = useState(false);
+  const [claimWinInSeconds, setClaimWinInSeconds] = useState(null);
+  const [claimPending, setClaimPending] = useState(false);
+
   const [chatMessages, setChatMessages] = useState([]);
   const [chatText, setChatText] = useState('');
   const [chatError, setChatError] = useState('');
@@ -782,27 +786,35 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    const accepting = drawOffer;
+    // Determine intent.
+    const isAccepting = drawOffer;
+    const isWithdrawing = drawPending && !drawOffer;
+    const isOffering = !drawOffer && !drawPending;
 
     socketRef.current.send(
       JSON.stringify({
         type: 'game.draw',
         gameId: currentGameId,
-        accept: accepting,
+        accept: isAccepting,
+        // `withdraw` is a client hint; the backend treats
+        // accept:false the same way for Lichess.
+        withdraw: isWithdrawing,
       }),
     );
 
-    if (!accepting) {
-      drawPendingRef.current = true;
-      setDrawPending(true);
-    } else {
+    if (isOffering || isWithdrawing) {
+      drawPendingRef.current = isOffering;
+      setDrawPending(isOffering);
+    } else if (isAccepting) {
       setDrawOffer(false);
     }
 
     setGameStatus(
-      accepting
-        ? 'Accepting draw...'
-        : 'Draw offered',
+      isAccepting
+        ? 'Accepting draw…'
+        : isWithdrawing
+          ? 'Draw offer withdrawn'
+          : 'Draw offered',
     );
   }
 
@@ -987,14 +999,9 @@ function reconcilePremoves(nextFen, newMoves) {
       }
 
       if (payload.type === 'game.found') {
-        gameIdRef.current = payload.gameId;
-        setGameId(payload.gameId);
-
-        setGameMode(GAME_MODE.LICHESS);
-        setMatchmaking(false);
-        setGameStatus('Game found');
-
-        return;
+          gameIdRef.current = payload.gameId;
+          setGameStatus('Opponent found, waiting for game details…');
+          return;
       }
 
       if (payload.type === 'error') {
@@ -1039,6 +1046,18 @@ function reconcilePremoves(nextFen, newMoves) {
         return;
       }
 
+      if (payload.type === 'game.claimVictory.result') {
+        if (!payload.ok) {
+          setClaimPending(false);
+          setGameStatus(
+            payload.message ?? 'Claim was rejected by Lichess',
+          );
+        }
+        // On success, wait for the follow-up gameState
+        // (status: 'timeout') to end the game and reset state.
+        return;
+      }
+
       if (payload.type === 'game.chat.error') {
         setChatError(payload.message);
         return;
@@ -1075,6 +1094,15 @@ function reconcilePremoves(nextFen, newMoves) {
 
       const event = payload.event;
 
+      if (event.type === 'opponentGone') {
+        setOpponentGone(Boolean(event.gone));
+        setClaimWinInSeconds(
+          typeof event.claimWinInSeconds === 'number'
+            ? event.claimWinInSeconds
+            : null,
+        );
+        return;
+      }
       if (event.type === 'chatLine') {
         setChatMessages((current) => {
           const alreadyShown = current.some(
@@ -1108,28 +1136,26 @@ function reconcilePremoves(nextFen, newMoves) {
           event.state.moves,
         );
 
-        const lastUciMove =
-          moves[moves.length - 1];
+        const lastUciMove = moves[moves.length - 1];
 
-        initialFenRef.current =
-          event.initialFen;
+        initialFenRef.current = event.initialFen;
 
         moveCountRef.current = moves.length;
 
         playerColorRef.current = color;
         setPlayerColor(color);
 
-        gameIdRef.current =
-          event.id ??
-          gameIdRef.current;
 
-        if (event.id) {
-          setGameId(event.id);
-        }
+        gameIdRef.current = event.id;
+        setGameId(event.id);
 
         setGameMode(GAME_MODE.LICHESS);
+        setMatchmaking(false);  
+        setGameStatus('Game in progress');
 
-        clearPremoves();
+        setOpponentGone(false);
+        setClaimWinInSeconds(null);
+        setClaimPending(false);
 
         setMoveHistory(
           getMoveHistory(
@@ -1189,8 +1215,6 @@ function reconcilePremoves(nextFen, newMoves) {
           updatedAt: Date.now(),
         });
 
-        setGameStatus('Game in progress');
-
         return;
       }
 
@@ -1221,14 +1245,10 @@ function reconcilePremoves(nextFen, newMoves) {
           moves.length;
 
         const ownDrawOffer =
-          playerColorRef.current === 'w'
-            ? event.wdraw
-            : event.bdraw;
+          playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
 
         const opponentDrawOffer =
-          playerColorRef.current === 'w'
-            ? event.bdraw
-            : event.wdraw;
+          playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
 
         if (moveWasMade) {
           drawPendingRef.current = false;
@@ -1249,6 +1269,8 @@ function reconcilePremoves(nextFen, newMoves) {
           setDrawOffer(
             Boolean(opponentDrawOffer),
           );
+          drawPendingRef.current = Boolean(ownDrawOffer);
+          setDrawPending(Boolean(ownDrawOffer));
         }
 
         setMoveHistory(
@@ -1342,8 +1364,9 @@ function reconcilePremoves(nextFen, newMoves) {
           fenRef.current = nextFen;
           setFen(nextFen);
 
-
-
+          setOpponentGone(false);
+          setClaimWinInSeconds(null);
+          setClaimPending(false);
 
           gameIdRef.current = null;
           setGameId(null);
@@ -1394,107 +1417,109 @@ function reconcilePremoves(nextFen, newMoves) {
   }, [account]);
 
   function handlePlay() {
-  if (
-    !socketReady ||
-    socketRef.current?.readyState !== WebSocket.OPEN
-  ) {
-    setGameStatus('Game server is not connected');
-    return;
-  }
+    if (
+      !socketReady ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      setGameStatus('Game server is not connected');
+      return;
+    }
 
-  const { time, increment, rated } = selectedTimeControl;
+    const { time, increment, rated } = selectedTimeControl;
 
-  if (rated && !isRatedAllowed(time)) {
-    setGameStatus('Rated games require Rapid or slower.');
-    return;
-  }
+    if (rated && !isRatedAllowed(time)) {
+      setGameStatus('Rated games require Rapid or slower.');
+      return;
+    }
 
-  clearPremoves();
+    setMatchmaking(true);
+    setGameStatus('Searching for an opponent...');
 
-  const newGame = new Chess();
-  fenRef.current = newGame.fen();
-  setFen(fenRef.current);
-
-  setCapturedPieces({ w: [], b: [] });
-  setClockSnapshot(null);
-
-  initialFenRef.current = null;
-  playerColorRef.current = null;
-  gameIdRef.current = null;
-  moveCountRef.current = 0;
-
-  drawPendingRef.current = false;
-
-  setGameId(null);
-  setGameMode(GAME_MODE.LOCAL);
-  setPlayerColor(null);
-
-  setLastMove(null);
-  setDrawOffer(false);
-  setDrawPending(false);
-
-  setChatMessages([]);
-  setChatText('');
-  setChatError('');
-
-  clearSelection();
-  closePromotionChoice();
-  clearPremoves();
-
-  setMatchmaking(true);
-  setGameStatus('Searching for an opponent...');
-
-  fetch('/api/game/start', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ time, increment, rated }),
-  })
-    .then((response) =>
-      response.json().then((data) => ({ response, data })),
-    )
-    .then(({ response, data }) => {
-      if (!response.ok) {
-        throw new Error(data.error ?? 'Unable to start game search');
-      }
+    fetch('/api/game/start', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ time, increment, rated }),
     })
-    .catch((error) => {
-      setMatchmaking(false);
-      setGameStatus(error.message);
-    });
-}
+      .then((response) =>
+        response.json().then((data) => ({ response, data })),
+      )
+      .then(({ response, data }) => {
+        if (!response.ok) {
+          throw new Error(data.error ?? 'Unable to start game search');
+        }
+        resetForNewGame();
+      })
+      .catch((error) => {
+        setMatchmaking(false);
+        setGameStatus(error.message);
+      });
+  }
+  function resetForNewGame() {
+    clearPremoves();
+
+    const newGame = new Chess();
+    fenRef.current = newGame.fen();
+    setFen(fenRef.current);
+
+    setCapturedPieces({ w: [], b: [] });
+    setClockSnapshot(null);
+
+    initialFenRef.current = null;
+    playerColorRef.current = null;
+    gameIdRef.current = null;
+    moveCountRef.current = 0;
+
+    drawPendingRef.current = false;
+
+    setGameId(null);
+    setGameMode(GAME_MODE.LOCAL);
+    setPlayerColor(null);
+
+    setLastMove(null);
+    setDrawOffer(false);
+    setDrawPending(false);
+
+    setChatMessages([]);
+    setChatText('');
+    setChatError('');
+
+    setMoveHistory([]);
+
+    clearSelection();
+    closePromotionChoice();
+
+    setOpponentGone(false);
+    setClaimWinInSeconds(null);
+    setClaimPending(false);
+  }
 
   async function handleCancel() {
     setCancellingMatchmaking(true);
 
     try {
-      const response = await fetch(
-        '/api/game/cancel',
+      const response = await fetch('/api/game/cancel',
         {
           method: 'POST',
           credentials: 'include',
         },
       );
 
-      const data =
-        response.status === 204
-          ? {}
-          : await response.json();
+      const data = response.status === 204 ? {} : await response.json();
 
       if (
         !response.ok &&
         response.status !== 404
       ) {
         throw new Error(
-          data.error ??
-            'Unable to cancel game search',
+          data.error ?? 'Unable to cancel game search',
         );
       }
-
+      // Even if the backend said 404, clear our local seek state.
+      gameIdRef.current = null;
+      setGameId(null);
       setMatchmaking(false);
-      setGameStatus(
-        'Game search cancelled',
-      );
+      setGameStatus('Game search cancelled');
     } catch (error) {
       setGameStatus(error.message);
     } finally {
@@ -1524,6 +1549,10 @@ function reconcilePremoves(nextFen, newMoves) {
       setGameId(null);
       setPlayerColor(null);
       setGameMode(GAME_MODE.LOCAL);
+
+      setOpponentGone(false);
+      setClaimWinInSeconds(null);
+      setClaimPending(false);
 
       setAccount(null);
     } catch {
@@ -1638,119 +1667,142 @@ function reconcilePremoves(nextFen, newMoves) {
 
 
   function makeMove(
-  from,
-  to,
-  promotion = '',
-  shouldAnimate = true,
-) {
-  const currentFen = fenRef.current;
-  const currentGame = new Chess(currentFen);
-  const movingPiece = currentGame.get(from);
+    from,
+    to,
+    promotion = '',
+    shouldAnimate = true,
+  ) {
+    const currentFen = fenRef.current;
+    const currentGame = new Chess(currentFen);
+    const movingPiece = currentGame.get(from);
 
-  if (!movingPiece) {
-    return;
+    if (!movingPiece) {
+      return;
+    }
+
+    const shouldPromptPromotion =
+      movingPiece.type === 'p' &&
+      ['1', '8'].includes(to[1]) &&
+      !promotion;
+
+    if (shouldPromptPromotion) {
+      setPromotionChoice({
+        from,
+        to,
+        color: movingPiece.color,
+        premove: false,
+      });
+
+      return;
+    }
+
+    if (isLichessGame) {
+      if (
+        !canPlayerMove(gameMode, {
+          piece: movingPiece,
+          playerColor,
+          turn: currentGame.turn(),
+        })
+      ) {
+        return;
+      }
+
+      const sent = sendOnlineMove(
+        from,
+        to,
+        promotion,
+      );
+
+      if (!sent) {
+        return;
+      }
+
+      clearPremoves();
+      closePromotionChoice();
+      clearSelection();
+
+      return;
+    }
+
+    if (gameMode !== GAME_MODE.LOCAL) {
+      return;
+    }
+
+    try {
+      const playedMove = currentGame.move({
+        from,
+        to,
+        promotion: promotion || undefined,
+      });
+
+      if (!playedMove) {
+        clearSelection();
+        return;
+      }
+
+      if (shouldAnimate) {
+        animateMove(
+          from,
+          to,
+          movingPiece,
+        );
+      }
+
+      setLastMove({
+        from: playedMove.from,
+        to: playedMove.to,
+      });
+
+      const nextFen = currentGame.fen();
+
+      fenRef.current = nextFen;
+      setFen(nextFen);
+
+      if (playedMove.captured) {
+        const capturedColor =
+          playedMove.color === 'w'
+            ? 'b'
+            : 'w';
+
+        setCapturedPieces((current) => ({
+          ...current,
+          [capturedColor]: [
+            ...current[capturedColor],
+            playedMove.captured,
+          ],
+        }));
+      }
+
+      closePromotionChoice();
+      clearSelection();
+    } catch {
+      closePromotionChoice();
+      clearSelection();
+    }
   }
 
-  const shouldPromptPromotion =
-    movingPiece.type === 'p' &&
-    ['1', '8'].includes(to[1]) &&
-    !promotion;
 
-  if (shouldPromptPromotion) {
-    setPromotionChoice({
-      from,
-      to,
-      color: movingPiece.color,
-      premove: false,
-    });
+  function handleClaimVictory() {
+    const currentGameId = gameIdRef.current;
 
-    return;
-  }
-
-  if (isLichessGame) {
     if (
-      !canPlayerMove(gameMode, {
-        piece: movingPiece,
-        playerColor,
-        turn: currentGame.turn(),
-      })
+      !currentGameId ||
+      socketRef.current?.readyState !== WebSocket.OPEN ||
+      claimPending
     ) {
       return;
     }
 
-    const sent = sendOnlineMove(
-      from,
-      to,
-      promotion,
+    setClaimPending(true);
+    setGameStatus('Claiming victory…');
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'game.claimVictory',
+        gameId: currentGameId,
+      }),
     );
-
-    if (!sent) {
-      return;
-    }
-
-    clearPremoves();
-    closePromotionChoice();
-    clearSelection();
-
-    return;
   }
-
-  if (gameMode !== GAME_MODE.LOCAL) {
-    return;
-  }
-
-  try {
-    const playedMove = currentGame.move({
-      from,
-      to,
-      promotion: promotion || undefined,
-    });
-
-    if (!playedMove) {
-      clearSelection();
-      return;
-    }
-
-    if (shouldAnimate) {
-      animateMove(
-        from,
-        to,
-        movingPiece,
-      );
-    }
-
-    setLastMove({
-      from: playedMove.from,
-      to: playedMove.to,
-    });
-
-    const nextFen = currentGame.fen();
-
-    fenRef.current = nextFen;
-    setFen(nextFen);
-
-    if (playedMove.captured) {
-      const capturedColor =
-        playedMove.color === 'w'
-          ? 'b'
-          : 'w';
-
-      setCapturedPieces((current) => ({
-        ...current,
-        [capturedColor]: [
-          ...current[capturedColor],
-          playedMove.captured,
-        ],
-      }));
-    }
-
-    closePromotionChoice();
-    clearSelection();
-  } catch {
-    closePromotionChoice();
-    clearSelection();
-  }
-}
 
   function handlePromotionChoice(pieceType) {
     if (!promotionChoice) return;
@@ -2635,27 +2687,38 @@ function reconcilePremoves(nextFen, newMoves) {
                           className="account-button"
                           type="button"
                           onClick={handleDraw}
-                          disabled={
-                            drawPending &&
-                            !drawOffer
-                          }
                         >
                           {drawOffer
                             ? 'Accept draw'
                             : drawPending
-                              ? 'Draw offered'
+                              ? 'Cancel draw offer'
                               : 'Offer draw'}
                         </button>
 
                         <button
                           className="account-button danger"
                           type="button"
-                          onClick={
-                            handleResign
-                          }
+                          onClick={handleResign}
                         >
                           Resign
                         </button>
+
+                        {isLichessGame &&
+                          opponentGone &&
+                          clockSnapshot?.status === 'started' && (
+                            <button
+                              className="account-button"
+                              type="button"
+                              onClick={handleClaimVictory}
+                              disabled={claimPending || claimWinInSeconds > 0}
+                            >
+                              {claimPending
+                                ? 'Claiming…'
+                                : claimWinInSeconds > 0
+                                  ? `Claim victory in ${claimWinInSeconds}s`
+                                  : 'Claim victory'}
+                            </button>
+                          )}
                       </>
                     )}
                   </div>

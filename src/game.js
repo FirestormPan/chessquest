@@ -235,6 +235,13 @@ export async function handleLichessDraw(accessToken, gameId, accept) {
   });
 }
 
+export async function claimLichessVictory(accessToken, gameId) {
+  return fetch(`${lichessUrl}/api/board/game/${gameId}/claim-victory`, {
+    method: 'POST',
+    headers: authorizationHeaders(accessToken),
+  });
+}
+
 export async function sendLichessChat(accessToken, gameId, room, text) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/chat`, {
     method: 'POST',

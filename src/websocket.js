@@ -8,6 +8,7 @@ import {
   sendLichessMove,
   startLichessEventStream,
   startLichessGameStream,
+  claimLichessVictory 
 } from './game.js';
 
 function send(socket, message) {
@@ -125,6 +126,23 @@ export function attachWebSocketServer(server, getAccessToken) {
               message: 'Draw request was rejected',
             });
           }
+          return;
+        }
+
+        if (message.type === 'game.claimVictory') {
+          if (message.gameId !== gameId) {
+            send(socket, { type: 'error', message: 'Invalid game ID' });
+            return;
+          }
+
+          const claimResponse = await claimLichessVictory(accessToken, gameId);
+          send(socket, {
+            type: 'game.claimVictory.result',
+            ok: claimResponse.ok,
+            message: claimResponse.ok
+              ? undefined
+              : `Lichess rejected the claim: ${await responseError(claimResponse)}`,
+          });
           return;
         }
 
