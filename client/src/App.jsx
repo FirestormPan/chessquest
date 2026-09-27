@@ -438,6 +438,7 @@ function App() {
   const [moveHistory, setMoveHistory] = useState([]);
 
   const [premoveQueue, setPremoveQueue] = useState([]);
+  const [premovesEnabled, setPremovesEnabled] = useState(true);
 
   const premoveSquares = useMemo(() => {
     const squares = new Set();
@@ -646,9 +647,8 @@ function App() {
     return;
   }
 
-  if (isLichessGame) {
-    const moves =
-      getAvailablePremoveMoves(square);
+  if (isLichessGame && premovesEnabled) {
+    const moves = getAvailablePremoveMoves(square);
 
     if (!moves.length) {
       clearSelection();
@@ -882,6 +882,12 @@ function reconcilePremoves(nextFen, newMoves) {
       })
       .catch(() => setSkinFolders([]));
   }, []);
+
+  useEffect(() => {
+    if (!premovesEnabled) {
+      clearPremoves();
+    }
+  }, [premovesEnabled]);
 
   useEffect(() => {
     if (
@@ -1557,7 +1563,7 @@ function reconcilePremoves(nextFen, newMoves) {
             return;
           }
 
-          if (isLichessGame) {
+          if (isLichessGame && premovesEnabled) {
             const canMove = canPlayerMove(
               gameMode,
               {
@@ -1813,8 +1819,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
 
   function queueOrPromptPremove(from, to) {
-    const piece = game.get(from);
+    if (!premovesEnabled) return;
 
+    const piece = game.get(from);
     if (!piece) return;
 
     const needsPromotion =
@@ -1989,7 +1996,7 @@ function reconcilePremoves(nextFen, newMoves) {
           '',
           false,
         );
-      } else if (isLichessGame) {
+      } else if (isLichessGame && premovesEnabled) {
         queueOrPromptPremove(
           pointerDrag.square,
           pointerDrag.destination,
@@ -2582,7 +2589,16 @@ function reconcilePremoves(nextFen, newMoves) {
                         disabled={matchmaking || Boolean(gameId)}
                       />
                   )}
-
+                  {isLichessGame && (
+                    <label className="premove-toggle">
+                      <input
+                        type="checkbox"
+                        checked={premovesEnabled}
+                        onChange={(event) => setPremovesEnabled(event.target.checked)}
+                      />
+                      <span>Enable premoves</span>
+                    </label>
+                  )}
                   <div
                     className="game-actions"
                     aria-label="Game actions"
