@@ -39,11 +39,24 @@ function applyMoves(initialFen, moves) {
   const nextGame = new Chess(normalizeFen(initialFen));
 
   for (const uci of parseUciMoves(moves)) {
-    nextGame.move(makeMoveFromUci(uci));
+    const played = nextGame.move(makeMoveFromUci(uci));
+    if (!played) {
+      throw new Error(`Illegal UCI move: ${uci}`);
+    }
   }
 
   return nextGame.fen();
 }
+
+// function applyMoves(initialFen, moves) {
+//   const nextGame = new Chess(normalizeFen(initialFen));
+
+//   for (const uci of parseUciMoves(moves)) {
+//     nextGame.move(makeMoveFromUci(uci));
+//   }
+
+//   return nextGame.fen();
+// }
 
 function getCapturedPieces(initialFen, moves) {
   const nextGame = new Chess(normalizeFen(initialFen));

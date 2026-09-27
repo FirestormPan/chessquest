@@ -1897,64 +1897,67 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePointerDown(event, square) {
-  /*
-   * Clicking a legal destination while a piece is selected
-   * belongs to the click-to-move path, not drag initiation.
-   */
-  if (
-    selectedSquare &&
-    square !== selectedSquare &&
-    legalMoves.includes(square)
-  ) {
-    return;
+    if (event.button !== 0) {
+      return;
+    }
+    /*
+    * Clicking a legal destination while a piece is selected
+    * belongs to the click-to-move path, not drag initiation.
+    */
+    if (
+      selectedSquare &&
+      square !== selectedSquare &&
+      legalMoves.includes(square)
+    ) {
+      return;
+    }
+
+    const piece = game.get(square);
+
+    const color = isLichessGame
+      ? playerColorRef.current
+      : realGame.turn();
+
+    if (!piece || !color) {
+      return;
+    }
+
+    if (piece.color !== color) {
+      return;
+    }
+
+    /*
+    * Local games only allow the side to move.
+    *
+    * Online games allow dragging our pieces during the
+    * opponent's turn to create premoves.
+    */
+    if (
+      !isLichessGame &&
+      realGame.turn() !== color
+    ) {
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(
+      event.pointerId,
+    );
+
+    suppressPieceClickRef.current = true;
+
+    setPointerDrag({
+      pointerId: event.pointerId,
+      square,
+      destination: square,
+      moved: false,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      piece,
+    });
+
+    setDraggingSquare(square);
+    selectSquare(square);
   }
-
-  const piece = game.get(square);
-
-  const color = isLichessGame
-    ? playerColorRef.current
-    : realGame.turn();
-
-  if (!piece || !color) {
-    return;
-  }
-
-  if (piece.color !== color) {
-    return;
-  }
-
-  /*
-   * Local games only allow the side to move.
-   *
-   * Online games allow dragging our pieces during the
-   * opponent's turn to create premoves.
-   */
-  if (
-    !isLichessGame &&
-    realGame.turn() !== color
-  ) {
-    return;
-  }
-
-  event.currentTarget.setPointerCapture(
-    event.pointerId,
-  );
-
-  suppressPieceClickRef.current = true;
-
-  setPointerDrag({
-    pointerId: event.pointerId,
-    square,
-    destination: square,
-    moved: false,
-    clientX: event.clientX,
-    clientY: event.clientY,
-    piece,
-  });
-
-  setDraggingSquare(square);
-  selectSquare(square);
-}
 
   function handlePointerMove(event) {
     if (
@@ -2313,7 +2316,7 @@ function reconcilePremoves(nextFen, newMoves) {
               </div>
             )}
 
-            {pointerDrag?.moved &&
+            {pointerDrag &&
               pointerDrag.piece && (
                 <div
                   className="piece dragged-piece"
