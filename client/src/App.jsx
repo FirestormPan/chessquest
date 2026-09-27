@@ -1,20 +1,26 @@
-import { useEffect, useRef, useState, useMemo  } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Chess } from 'chess.js';
-import { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getMoveHistory, getCheckedKingSquare } from './boardRules'
+import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition,}   from './boardRules';
+import { GAME_MODE, canPlayerMove } from './gameMode';
+import {  TIME_CONTROL_CATEGORIES,   MATCHMAKING_CATEGORIES, isRatedAllowed,  formatTimeControl,} from './timeControls';
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
+
 const pieceSymbols = {
   w: { p: '♙', n: '♘', b: '♗', r: '♖', q: '♕', k: '♔' },
   b: { p: '♟', n: '♞', b: '♝', r: '♜', q: '♛', k: '♚' },
 };
+
 const promotionOptions = ['q', 'r', 'b', 'n'];
+
 const promotionNames = {
   q: 'queen',
   r: 'rook',
   b: 'bishop',
   n: 'knight',
 };
+
 const pieceNames = {
   p: 'pawn',
   n: 'knight',
@@ -24,12 +30,17 @@ const pieceNames = {
   k: 'king',
 };
 
+const DOUBLE_CLICK_MS = 300;
 
 function PieceVisual({ color, type, skinFolder, className = '' }) {
   const [failedImagePath, setFailedImagePath] = useState(null);
 
   if (!skinFolder) {
-    return <span className={className}>{pieceSymbols[color][type]}</span>;
+    return (
+      <span className={className}>
+        {pieceSymbols[color][type]}
+      </span>
+    );
   }
 
   const imagePath = `/${skinFolder}/${pieceNames[type]}.png`;
@@ -44,20 +55,21 @@ function PieceVisual({ color, type, skinFolder, className = '' }) {
       onError={() => setFailedImagePath(imagePath)}
     />
   ) : (
-    <span className={className}>{pieceSymbols[color][type]}</span>
+    <span className={className}>
+      {pieceSymbols[color][type]}
+    </span>
   );
 }
-
 
 function getSquarePosition(square, boardFiles, boardRanks) {
   const fileIndex = boardFiles.indexOf(square[0]);
   const rankIndex = boardRanks.indexOf(Number(square[1]));
+
   return {
     left: `${fileIndex * 12.5}%`,
     top: `${rankIndex * 12.5}%`,
   };
 }
-
 
 function formatClock(milliseconds) {
   const seconds = Math.max(0, milliseconds) / 1000;
@@ -93,7 +105,8 @@ function ChessSquare({
   onPointerCancel,
   isLastMove,
   skinFolder,
-  isChecked
+  isChecked,
+  isPremove,
 }) {
   return (
     <button
@@ -102,27 +115,34 @@ function ChessSquare({
       } ${isLegalMove ? 'legal-move' : ''} ${
         isLastMove ? 'last-move' : ''
       } ${isChecked ? 'in-check' : ''} ${
-        piece ? 'occupied' : ''
-      }`}
-
-      
-
+        isPremove ? 'premove' : ''
+      } ${piece ? 'occupied' : ''}`}
       type="button"
       role="gridcell"
       data-square={square}
-      aria-label={`${square}${piece ? `, ${piece.color === 'w' ? 'white' : 'black'} piece` : ''}${isLegalMove ? ', legal destination' : ''}`}
+      aria-label={`${square}${
+        piece
+          ? `, ${piece.color === 'w' ? 'white' : 'black'} piece`
+          : ''
+      }${isLegalMove ? ', legal destination' : ''}`}
       onClick={() => onSquareClick(square)}
     >
       {piece && (
         <span
-          className={`piece ${draggingSquare === square ? 'is-dragging' : ''}`}
+          className={`piece ${
+            draggingSquare === square ? 'is-dragging' : ''
+          }`}
           onClick={(event) => onPieceClick(event, square)}
           onPointerDown={(event) => onPointerDown(event, square)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
         >
-          <PieceVisual color={piece.color} type={piece.type} skinFolder={skinFolder} />
+          <PieceVisual
+            color={piece.color}
+            type={piece.type}
+            skinFolder={skinFolder}
+          />
         </span>
       )}
     </button>
@@ -137,7 +157,6 @@ function ChessBoard({
   lastMove,
   legalMoves,
   draggingSquare,
-  suppressPieceClickRef,
   onSquareClick,
   onPieceClick,
   onPointerDown,
@@ -147,23 +166,35 @@ function ChessBoard({
   onBoardClick,
   moveAnimation,
   onMoveAnimationEnd,
-  pointerDrag,
   skinFolder,
   playerColor,
   opponentSkinFolder,
-  checkedSquare
+  checkedSquare,
+  premoveSquares,
 }) {
   const skinColor = playerColor ?? 'w';
 
   return (
-    <div className="board" role="grid" aria-label="Interactive chessboard" onClick={onBoardClick}>
+    <div
+      className="board"
+      role="grid"
+      aria-label="Interactive chessboard"
+      onClick={onBoardClick}
+    >
       {boardRanks.flatMap((rank, rankIndex) =>
         boardFiles.map((file, fileIndex) => {
           const square = `${file}${rank}`;
           const piece = game.get(square);
-          const displayedPiece = moveAnimation?.to === square ? null : piece;
-          const isDark = (rankIndex + fileIndex) % 2 === 1;
-          const isLastMove =  lastMove?.from === square || lastMove?.to === square;
+          const displayedPiece =
+            moveAnimation?.to === square ? null : piece;
+
+          const isDark =
+            (rankIndex + fileIndex) % 2 === 1;
+
+          const isLastMove =
+            lastMove?.from === square ||
+            lastMove?.to === square;
+
           const isChecked = checkedSquare === square;
 
           return (
@@ -183,16 +214,24 @@ function ChessBoard({
               onPointerCancel={onPointerCancel}
               isLastMove={isLastMove}
               isChecked={isChecked}
-              skinFolder={piece?.color === skinColor ? skinFolder : opponentSkinFolder}
+              isPremove={premoveSquares.has(square)}
+              skinFolder={
+                piece?.color === skinColor
+                  ? skinFolder
+                  : opponentSkinFolder
+              }
             />
           );
         }),
       )}
+
       {moveAnimation && (
         <div
           className="move-animation"
           style={getSquarePosition(
-            moveAnimation.phase === 'destination' ? moveAnimation.to : moveAnimation.from,
+            moveAnimation.phase === 'destination'
+              ? moveAnimation.to
+              : moveAnimation.from,
             boardFiles,
             boardRanks,
           )}
@@ -202,7 +241,11 @@ function ChessBoard({
           <PieceVisual
             color={moveAnimation.piece.color}
             type={moveAnimation.piece.type}
-            skinFolder={moveAnimation.piece.color === skinColor ? skinFolder : opponentSkinFolder}
+            skinFolder={
+              moveAnimation.piece.color === skinColor
+                ? skinFolder
+                : opponentSkinFolder
+            }
           />
         </div>
       )}
@@ -210,92 +253,282 @@ function ChessBoard({
   );
 }
 
+function TimeControlPicker({ value, onChange, disabled = false }) {
+  const { category, time, increment, rated } = value;
+
+  const presets = TIME_CONTROL_CATEGORIES[category]?.presets ?? [];
+  const ratedAllowed = isRatedAllowed(time);
+
+  // Only render categories that the Board API accepts for open seeks.
+  const availableCategories = MATCHMAKING_CATEGORIES.map(
+    (key) => [key, TIME_CONTROL_CATEGORIES[key]],
+  );
+
+  function handleCategoryChange(event) {
+    const nextCategory = event.target.value;
+    const firstPreset = TIME_CONTROL_CATEGORIES[nextCategory].presets[0];
+
+    onChange({
+      category: nextCategory,
+      time: firstPreset.time,
+      increment: firstPreset.increment,
+      rated: isRatedAllowed(firstPreset.time) ? rated : false,
+    });
+  }
+
+  function handlePresetChange(event) {
+    const index = Number(event.target.value);
+    const preset = presets[index];
+
+    if (!preset) return;
+
+    onChange({
+      ...value,
+      time: preset.time,
+      increment: preset.increment,
+      rated: isRatedAllowed(preset.time) ? rated : false,
+    });
+  }
+
+  const selectedPresetIndex = presets.findIndex(
+    (preset) => preset.time === time && preset.increment === increment,
+  );
+
+  return (
+    <div className="time-control-picker" aria-label="Time control">
+      <div className="time-control-row">
+        <label htmlFor="time-control-category">Time control</label>
+        <select
+          id="time-control-category"
+          value={category}
+          disabled={disabled}
+          onChange={handleCategoryChange}
+        >
+          {availableCategories.map(([key, cat]) => (
+            <option key={key} value={key}>
+              {cat.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="time-control-row">
+        <label htmlFor="time-control-preset">Preset</label>
+        <select
+          id="time-control-preset"
+          value={selectedPresetIndex === -1 ? 0 : selectedPresetIndex}
+          disabled={disabled}
+          onChange={handlePresetChange}
+        >
+          {presets.map((preset, index) => (
+            <option key={`${preset.time}-${preset.increment}`} value={index}>
+              {formatTimeControl(preset.time, preset.increment)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <label className="time-control-rated">
+        <input
+          type="checkbox"
+          checked={rated}
+          disabled={disabled || !ratedAllowed}
+          onChange={(event) =>
+            onChange({ ...value, rated: event.target.checked })
+          }
+        />
+        <span>Rated</span>
+      </label>
+
+      {!ratedAllowed && (
+        <p className="time-control-hint">
+          Rated games are only available at Rapid (10+0) and slower.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
 function App() {
   const socketRef = useRef(null);
+
   const initialFenRef = useRef(null);
+  const fenRef = useRef(new Chess().fen());
+
   const playerColorRef = useRef(null);
+  const gameIdRef = useRef(null);
+
   const moveCountRef = useRef(0);
+  const lastClickRef = useRef({ square: null, time: 0 });
   const suppressPieceClickRef = useRef(false);
   const selectedSquareRef = useRef(null);
+
   const boardFrameRef = useRef(null);
   const animationTimerRef = useRef(null);
 
+  const premoveQueueRef = useRef([]);
+  const premoveSendingRef = useRef(false);
+
   const [fen, setFen] = useState(() => new Chess().fen());
-  const fenRef = useRef(fen);
   const [lastMove, setLastMove] = useState(null);
   const [moveAnimation, setMoveAnimation] = useState(null);
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalMoves, setLegalMoves] = useState([]);
   const [draggingSquare, setDraggingSquare] = useState(null);
   const [pointerDrag, setPointerDrag] = useState(null);
+
   const [account, setAccount] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+
   const [gameId, setGameId] = useState(null);
+  const [gameMode, setGameMode] = useState(GAME_MODE.LOCAL);
   const [matchmaking, setMatchmaking] = useState(false);
-  const [cancellingMatchmaking, setCancellingMatchmaking] = useState(false);
+  const [cancellingMatchmaking, setCancellingMatchmaking] =
+    useState(false);
   const [gameStatus, setGameStatus] = useState('');
+  const [selectedTimeControl, setSelectedTimeControl] = useState(() => {
+    const defaultCategory = 'rapid';
+    const firstPreset = TIME_CONTROL_CATEGORIES[defaultCategory].presets[0];
+
+    return {
+      category: defaultCategory,
+      time: firstPreset.time,
+      increment: firstPreset.increment,
+      rated: false,
+    };
+  });
+
   const [playerColor, setPlayerColor] = useState(null);
   const [socketReady, setSocketReady] = useState(false);
-  const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
+
+  const [capturedPieces, setCapturedPieces] = useState({
+    w: [],
+    b: [],
+  });
+
   const [rightRailView, setRightRailView] = useState('game');
+
   const [skinFolders, setSkinFolders] = useState([]);
-  const [selectedSkinFolder, setSelectedSkinFolder] = useState('alteon');
-  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState('evil');
-  const [selectingOpponentSkin, setSelectingOpponentSkin] = useState(false);
+  const [selectedSkinFolder, setSelectedSkinFolder] =
+    useState('alteon');
+  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] =
+    useState('evil');
+  const [selectingOpponentSkin, setSelectingOpponentSkin] =
+    useState(false);
+
   const [clockSnapshot, setClockSnapshot] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
+
   const [promotionChoice, setPromotionChoice] = useState(null);
-  const [promotionPopupStyle, setPromotionPopupStyle] = useState({ left: 0, top: 0 });
+  const [promotionPopupStyle, setPromotionPopupStyle] = useState({
+    left: 0,
+    top: 0,
+  });
+
   const [drawOffer, setDrawOffer] = useState(false);
   const [drawPending, setDrawPending] = useState(false);
   const drawPendingRef = useRef(false);
+
   const [chatMessages, setChatMessages] = useState([]);
   const [chatText, setChatText] = useState('');
   const [chatError, setChatError] = useState('');
   const chatMessagesRef = useRef(null);
+
   const [moveHistory, setMoveHistory] = useState([]);
 
+  const [premoveQueue, setPremoveQueue] = useState([]);
 
-  const game = useMemo(() => new Chess(fen), [fen]);
+  const premoveSquares = useMemo(() => {
+    const squares = new Set();
+
+    for (const move of premoveQueue) {
+      squares.add(move.from);
+      squares.add(move.to);
+    }
+
+    return squares;
+  }, [premoveQueue]);
+
+
+  // for premove simulation
+  const realGame = useMemo(() => new Chess(fen), [fen]);
+  const displayFen = useMemo(() => {
+    if (!premoveQueue.length || !playerColor) return fen;
+
+    const simulated = getPremovePosition(
+      fen,
+      premoveQueue,
+      playerColor,
+    );
+
+    return simulated ?? fen;
+  }, [fen, premoveQueue, playerColor]);
+
+  const game = useMemo(() => new Chess(displayFen), [displayFen]);
+
+  const isLichessGame =
+    gameMode === GAME_MODE.LICHESS;
+
   const checkedSquare = getCheckedKingSquare(fen);
-  const boardFiles = playerColor === 'b' ? [...files].reverse() : files;
-  const boardRanks = playerColor === 'b' ? [...ranks].reverse() : ranks;
-  const elapsed = clockSnapshot?.status === 'started' ? clockNow - clockSnapshot.updatedAt : 0;
-  const whiteTime = clockSnapshot?.wtime == null ? 0 : clockSnapshot.wtime - (clockSnapshot.turn === 'w' ? elapsed : 0);
-  const blackTime = clockSnapshot?.btime == null ? 0 : clockSnapshot.btime - (clockSnapshot.turn === 'b' ? elapsed : 0);
+
+  const boardFiles = useMemo(
+    () => (playerColor === 'b' ? [...files].reverse() : files),
+    [playerColor],
+  );
+
+  const boardRanks = useMemo(
+    () => (playerColor === 'b' ? [...ranks].reverse() : ranks),
+    [playerColor],
+  );
+
+  const elapsed =
+    clockSnapshot?.status === 'started'
+      ? clockNow - clockSnapshot.updatedAt
+      : 0;
+
+  const whiteTime =
+    clockSnapshot?.wtime == null
+      ? 0
+      : clockSnapshot.wtime -
+        (clockSnapshot.turn === 'w' ? elapsed : 0);
+
+  const blackTime =
+    clockSnapshot?.btime == null
+      ? 0
+      : clockSnapshot.btime -
+        (clockSnapshot.turn === 'b' ? elapsed : 0);
 
   function getSkinFolderForColor(color) {
     const skinColor = playerColor ?? 'w';
-    return color === skinColor ? selectedSkinFolder : selectedOpponentSkinFolder;
+
+    return color === skinColor
+      ? selectedSkinFolder
+      : selectedOpponentSkinFolder;
   }
 
   function selectSkinFolder(folder) {
-  if (selectingOpponentSkin) {
-    // Clicking the already-selected opponent skin deselects it.
-    if (selectedOpponentSkinFolder === folder) {
-      setSelectedOpponentSkinFolder(null);
+    if (selectingOpponentSkin) {
+      if (selectedOpponentSkinFolder === folder) {
+        setSelectedOpponentSkinFolder(null);
+        return;
+      }
+
+      if (selectedSkinFolder === folder) return;
+
+      setSelectedOpponentSkinFolder(folder);
       return;
     }
 
-    // A skin selected for the player cannot be selected for the opponent.
-    if (selectedSkinFolder === folder) return;
+    if (selectedSkinFolder === folder) {
+      setSelectedSkinFolder(null);
+      return;
+    }
 
-    setSelectedOpponentSkinFolder(folder);
-    return;
+    if (selectedOpponentSkinFolder === folder) return;
+
+    setSelectedSkinFolder(folder);
   }
-
-  // Clicking the already-selected player skin deselects it.
-  if (selectedSkinFolder === folder) {
-    setSelectedSkinFolder(null);
-    return;
-  }
-
-  // A skin selected for the opponent cannot be selected for the player.
-  if (selectedOpponentSkinFolder === folder) return;
-
-  setSelectedSkinFolder(folder);
-}
-
 
   function clearSelection() {
     selectedSquareRef.current = null;
@@ -307,11 +540,29 @@ function App() {
     if (!piece) return;
 
     window.clearTimeout(animationTimerRef.current);
-    setMoveAnimation({ from, to, piece, phase: 'source' });
-    window.requestAnimationFrame(() => {
-      setMoveAnimation((current) => current && { ...current, phase: 'destination' });
+
+    setMoveAnimation({
+      from,
+      to,
+      piece,
+      phase: 'source',
     });
-    animationTimerRef.current = window.setTimeout(() => setMoveAnimation(null), 280);
+
+    window.requestAnimationFrame(() => {
+      setMoveAnimation((current) =>
+        current
+          ? {
+              ...current,
+              phase: 'destination',
+            }
+          : null,
+      );
+    });
+
+    animationTimerRef.current = window.setTimeout(
+      () => setMoveAnimation(null),
+      280,
+    );
   }
 
   function finishMoveAnimation() {
@@ -323,54 +574,309 @@ function App() {
     setPromotionChoice(null);
   }
 
-  function handleResign() {
-    if (!gameId || socketRef.current?.readyState !== WebSocket.OPEN) return;
-    if (!window.confirm('Resign this game?')) return;
+  
 
-    socketRef.current.send(JSON.stringify({ type: 'game.resign', gameId }));
+  function clearPremoves() {
+    premoveQueueRef.current = [];
+    setPremoveQueue([]);
+    premoveSendingRef.current = false;
+  }
+
+  function getAvailablePremoveMoves(square) {
+  const color = playerColorRef.current;
+
+  if (!isLichessGame || !color) {
+    return [];
+  }
+
+  const simulatedFen = getPremovePosition(
+    fenRef.current,
+    premoveQueueRef.current,
+    color,
+  );
+
+  if (!simulatedFen) {
+    return [];
+  }
+
+  return getPremoveMovesForPiece(
+    simulatedFen,
+    square,
+    color,
+  );
+}
+
+  function selectSquare(square) {
+  const piece = game.get(square);
+
+  if (!piece) {
+    clearSelection();
+    return;
+  }
+
+  const color = isLichessGame
+    ? playerColorRef.current
+    : realGame.turn();
+
+  if (!color || piece.color !== color) {
+    clearSelection();
+    return;
+  }
+
+  const isOurTurn =
+    realGame.turn() === color;
+
+  if (isOurTurn) {
+    const moves = getLegalMovesForPiece(
+      fenRef.current,
+      square,
+    );
+
+    if (!moves.length) {
+      clearSelection();
+      return;
+    }
+
+    selectedSquareRef.current = square;
+    setSelectedSquare(square);
+    setLegalMoves(
+      moves.map((move) => move.to),
+    );
+
+    return;
+  }
+
+  if (isLichessGame) {
+    const moves =
+      getAvailablePremoveMoves(square);
+
+    if (!moves.length) {
+      clearSelection();
+      return;
+    }
+
+    selectedSquareRef.current = square;
+    setSelectedSquare(square);
+    setLegalMoves(
+      moves.map((move) => move.to),
+    );
+  }
+}
+  
+
+
+function reconcilePremoves(nextFen, newMoves) {
+  let queue = premoveQueueRef.current;
+
+  if (!queue.length) {
+    return;
+  }
+
+  /*
+   * Only remove the first premove after the server
+   * has confirmed that exact UCI move.
+   */
+  if (premoveSendingRef.current) {
+    const sentMove = queue[0];
+
+    const sentUci =
+      `${sentMove.from}${sentMove.to}${sentMove.promotion ?? ''}`;
+
+    if (newMoves.includes(sentUci)) {
+      queue = queue.slice(1);
+
+      premoveQueueRef.current = queue;
+      setPremoveQueue(queue);
+
+      premoveSendingRef.current = false;
+    }
+  }
+
+  queue = premoveQueueRef.current;
+
+  if (!queue.length) {
+    return;
+  }
+
+  const color = playerColorRef.current;
+
+  if (!color) {
+    clearPremoves();
+    return;
+  }
+
+  // Drop leading premoves that are now impossible.
+  // A recapture premove is only valid if the destination
+  // no longer holds our own piece.
+  while (queue.length) {
+    const head = queue[0];
+    const headGame = new Chess(nextFen);
+    const dest = headGame.get(head.to);
+
+    const ownDestination = dest && dest.color === color;
+
+    // Validate the whole remaining sequence strictly.
+    const valid = !ownDestination
+      && validatePremoveSequence(nextFen, queue, color, false);
+
+    if (valid) break;
+
+    // If the head was a recapture that never happened,
+    // drop the entire chain (chained premoves depended on it).
+    // Otherwise just trim the tail.
+    if (ownDestination) {
+      queue = [];
+      break;
+    }
+
+    queue = queue.slice(0, -1);
+  }
+
+  if (queue.length !== premoveQueueRef.current.length) {
+    premoveQueueRef.current = queue;
+    setPremoveQueue(queue);
+  }
+
+  if (!queue.length) return;
+
+  const currentGame = new Chess(nextFen);
+  if (
+    currentGame.turn() === color &&
+    !premoveSendingRef.current
+  ) {
+    window.setTimeout(() => tryExecuteNextPremove(), 0);
+  }
+}
+
+  function handleResign() {
+    const currentGameId = gameIdRef.current;
+
+    if (
+      !currentGameId ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    if (!window.confirm('Resign this game?')) {
+      return;
+    }
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'game.resign',
+        gameId: currentGameId,
+      }),
+    );
+
     setGameStatus('Resigning game...');
   }
 
   function handleDraw() {
-    if (!gameId || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    const currentGameId = gameIdRef.current;
+
+    if (
+      !currentGameId ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
 
     const accepting = drawOffer;
-    socketRef.current.send(JSON.stringify({ type: 'game.draw', gameId, accept: accepting }));
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'game.draw',
+        gameId: currentGameId,
+        accept: accepting,
+      }),
+    );
+
     if (!accepting) {
       drawPendingRef.current = true;
       setDrawPending(true);
     } else {
       setDrawOffer(false);
     }
-    setGameStatus(accepting ? 'Accepting draw...' : 'Draw offered');
+
+    setGameStatus(
+      accepting
+        ? 'Accepting draw...'
+        : 'Draw offered',
+    );
   }
 
   function handleChatSubmit(event) {
     event.preventDefault();
+
     const text = chatText.trim();
-    if (!gameId || !text || text.length > 140 || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    const currentGameId = gameIdRef.current;
+
+    if (
+      !currentGameId ||
+      !text ||
+      text.length > 140 ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
 
     setChatError('');
-    socketRef.current.send(JSON.stringify({ type: 'game.chat', gameId, room: 'player', text }));
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'game.chat',
+        gameId: currentGameId,
+        room: 'player',
+        text,
+      }),
+    );
+
     setChatText('');
   }
 
+  useEffect(() => {
+    premoveQueueRef.current = premoveQueue;
+  }, [premoveQueue]);
 
   useEffect(() => {
-    fetch('/api/auth/me', { credentials: 'include' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => setAccount(data?.account ?? null))
+    if (selectedTimeControl.rated && !isRatedAllowed(selectedTimeControl.time)) {
+      setSelectedTimeControl((current) => ({ ...current, rated: false }));
+    }
+  }, [selectedTimeControl]);
+
+  useEffect(() => {
+    fetch('/api/auth/me', {
+      credentials: 'include',
+    })
+      .then((response) =>
+        response.ok ? response.json() : null,
+      )
+      .then((data) =>
+        setAccount(data?.account ?? null),
+      )
       .catch(() => setAccount(null))
       .finally(() => setAuthLoading(false));
   }, []);
 
   useEffect(() => {
     fetch('/api/skins')
-      .then((response) => (response.ok ? response.json() : { skins: [] }))
+      .then((response) =>
+        response.ok
+          ? response.json()
+          : { skins: [] },
+      )
       .then((data) => {
-        const folders = Array.isArray(data.skins) ? data.skins : [];
+        const folders = Array.isArray(data.skins)
+          ? data.skins
+          : [];
+
         setSkinFolders(folders);
-        if (folders.length && !folders.includes(selectedSkinFolder)) {
+
+        if (
+          folders.length &&
+          !folders.includes(selectedSkinFolder)
+        ) {
           setSelectedSkinFolder(folders[0]);
         }
       })
@@ -378,31 +884,63 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!clockSnapshot || clockSnapshot.status !== 'started') return undefined;
+    if (
+      !clockSnapshot ||
+      clockSnapshot.status !== 'started'
+    ) {
+      return undefined;
+    }
 
-    const interval = window.setInterval(() => setClockNow(Date.now()), 100);
+    const interval = window.setInterval(
+      () => setClockNow(Date.now()),
+      100,
+    );
+
     return () => window.clearInterval(interval);
   }, [clockSnapshot]);
 
   useEffect(() => {
-    chatMessagesRef.current?.scrollTo({ top: chatMessagesRef.current.scrollHeight });
+    chatMessagesRef.current?.scrollTo({
+      top: chatMessagesRef.current.scrollHeight,
+    });
   }, [chatMessages]);
 
   useEffect(() => {
-    if (!promotionChoice || !boardFrameRef.current) return undefined;
+    if (
+      !promotionChoice ||
+      !boardFrameRef.current
+    ) {
+      return undefined;
+    }
 
-    const squareElement = boardFrameRef.current.querySelector(`[data-square="${promotionChoice.to}"]`);
-    if (!squareElement) return undefined;
+    const squareElement =
+      boardFrameRef.current.querySelector(
+        `[data-square="${promotionChoice.to}"]`,
+      );
 
-    const squareRect = squareElement.getBoundingClientRect();
+    if (!squareElement) {
+      return undefined;
+    }
+
+    const squareRect =
+      squareElement.getBoundingClientRect();
 
     setPromotionPopupStyle({
-      left: squareRect.left + squareRect.width / 2,
-      top: squareRect.top + squareRect.height / 2,
+      left:
+        squareRect.left +
+        squareRect.width / 2,
+      top:
+        squareRect.top +
+        squareRect.height / 2,
     });
 
     return undefined;
-  }, [promotionChoice, fen, boardFiles, boardRanks]);
+  }, [
+    promotionChoice,
+    fen,
+    boardFiles,
+    boardRanks,
+  ]);
 
   useEffect(() => {
     if (!account) {
@@ -410,41 +948,74 @@ function App() {
       return undefined;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+    const protocol =
+      window.location.protocol === 'https:'
+        ? 'wss'
+        : 'ws';
+
+    const socket = new WebSocket(
+      `${protocol}://${window.location.host}/ws`,
+    );
+
     socketRef.current = socket;
 
     socket.onopen = () => {
       if (socketRef.current !== socket) return;
+
       setSocketReady(true);
       setGameStatus('Connected to game server');
     };
 
     socket.onmessage = (message) => {
       if (socketRef.current !== socket) return;
+
       let payload;
+
       try {
         payload = JSON.parse(message.data);
       } catch {
-        setGameStatus('Received an invalid message from the game server');
+        setGameStatus(
+          'Received an invalid message from the game server',
+        );
         return;
       }
 
       if (payload.type === 'game.found') {
+        gameIdRef.current = payload.gameId;
         setGameId(payload.gameId);
+
+        setGameMode(GAME_MODE.LICHESS);
         setMatchmaking(false);
         setGameStatus('Game found');
+
         return;
       }
 
       if (payload.type === 'error') {
-        if (payload.scope === 'chat') setChatError(payload.message);
-        if (payload.message === 'Draw request was rejected') {
+        if (payload.scope === 'chat') {
+          setChatError(payload.message);
+        }
+
+        /*
+         * A rejected game.move must release the premove
+         * sending lock. Do not clear premoves for unrelated
+         * errors such as chat/draw errors.
+         */
+        if (payload.scope === 'game.move') {
+          clearPremoves();
+        }
+
+        if (
+          payload.message ===
+          'Draw request was rejected'
+        ) {
           drawPendingRef.current = false;
           setDrawPending(false);
         }
+
         setMatchmaking(false);
         setGameStatus(payload.message);
+
         return;
       }
 
@@ -452,8 +1023,13 @@ function App() {
         if (!payload.ok) {
           drawPendingRef.current = false;
           setDrawPending(false);
-          setGameStatus(payload.message ?? 'Draw request was rejected');
+
+          setGameStatus(
+            payload.message ??
+              'Draw request was rejected',
+          );
         }
+
         return;
       }
 
@@ -464,43 +1040,97 @@ function App() {
 
       if (payload.type === 'game.chat.sent') {
         setChatMessages((current) => {
-          const alreadyShown = current.some((message) => (
-            message.room === payload.room
-            && message.username === account.username
-            && message.text === payload.text
-          ));
+          const alreadyShown = current.some(
+            (message) =>
+              message.room === payload.room &&
+              message.username ===
+                account.username &&
+              message.text === payload.text,
+          );
+
           return alreadyShown
             ? current
-            : [...current, { room: payload.room, username: account.username, text: payload.text }];
+            : [
+                ...current,
+                {
+                  room: payload.room,
+                  username: account.username,
+                  text: payload.text,
+                },
+              ];
         });
+
         return;
       }
 
-      if (payload.type !== 'game.event') return;
+      if (payload.type !== 'game.event') {
+        return;
+      }
 
       const event = payload.event;
 
       if (event.type === 'chatLine') {
         setChatMessages((current) => {
-          const alreadyShown = current.some((message) => (
-            message.room === event.room
-            && message.username === event.username
-            && message.text === event.text
-          ));
-          return alreadyShown ? current : [...current, event];
+          const alreadyShown = current.some(
+            (message) =>
+              message.room === event.room &&
+              message.username === event.username &&
+              message.text === event.text,
+          );
+
+          return alreadyShown
+            ? current
+            : [...current, event];
         });
+
         return;
       }
 
       if (event.type === 'gameFull') {
-        initialFenRef.current = event.initialFen;
-        const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
-        const nextFen = applyMoves(event.initialFen, event.state.moves);
-        const moves = parseUciMoves(event.state.moves);
-        setMoveHistory(getMoveHistory(event.initialFen, event.state.moves));
+        const color =
+          event.white?.id?.toLowerCase() ===
+          account.username?.toLowerCase()
+            ? 'w'
+            : 'b';
 
-        const lastUciMove = moves[moves.length - 1];
+        const nextFen = applyMoves(
+          event.initialFen,
+          event.state.moves,
+        );
+
+        const moves = parseUciMoves(
+          event.state.moves,
+        );
+
+        const lastUciMove =
+          moves[moves.length - 1];
+
+        initialFenRef.current =
+          event.initialFen;
+
         moveCountRef.current = moves.length;
+
+        playerColorRef.current = color;
+        setPlayerColor(color);
+
+        gameIdRef.current =
+          event.id ??
+          gameIdRef.current;
+
+        if (event.id) {
+          setGameId(event.id);
+        }
+
+        setGameMode(GAME_MODE.LICHESS);
+
+        clearPremoves();
+
+        setMoveHistory(
+          getMoveHistory(
+            event.initialFen,
+            event.state.moves,
+          ),
+        );
 
         setLastMove(
           lastUciMove
@@ -508,182 +1138,357 @@ function App() {
                 from: lastUciMove.slice(0, 2),
                 to: lastUciMove.slice(2, 4),
               }
-            : null
+            : null,
         );
 
-
-
-        setPlayerColor(color);
-        playerColorRef.current = color;
         setDrawOffer(false);
         drawPendingRef.current = false;
         setDrawPending(false);
-        setChatMessages(Array.isArray(event.chat) ? event.chat : []);
+
+        setChatMessages(
+          Array.isArray(event.chat)
+            ? event.chat
+            : [],
+        );
+
         setChatError('');
+
         fenRef.current = nextFen;
         setFen(nextFen);
-        setCapturedPieces(getCapturedPieces(event.initialFen, event.state.moves));
+
+        setCapturedPieces(
+          getCapturedPieces(
+            event.initialFen,
+            event.state.moves,
+          ),
+        );
+
         setClockSnapshot({
-          wtime: clockValue(event.state.wtime),
-          btime: clockValue(event.state.btime),
-          winc: clockValue(event.clock?.increment) ?? 0,
-          binc: clockValue(event.clock?.increment) ?? 0,
+          wtime: clockValue(
+            event.state.wtime,
+          ),
+          btime: clockValue(
+            event.state.btime,
+          ),
+          winc:
+            clockValue(
+              event.clock?.increment,
+            ) ?? 0,
+          binc:
+            clockValue(
+              event.clock?.increment,
+            ) ?? 0,
           turn: new Chess(nextFen).turn(),
           status: event.state.status,
           updatedAt: Date.now(),
         });
+
         setGameStatus('Game in progress');
+
         return;
       }
 
-  if (event.type === 'gameState' && initialFenRef.current) {
-  const nextFen = applyMoves(
-    initialFenRef.current,
-    event.moves
-  );
+      if (
+        event.type === 'gameState' &&
+        initialFenRef.current
+      ) {
+        const nextFen = applyMoves(
+          initialFenRef.current,
+          event.moves,
+        );
 
-  const moves = parseUciMoves(event.moves);
-  const lastUciMove = moves[moves.length - 1];
+        const moves = parseUciMoves(
+          event.moves,
+        );
 
-  const newMoves = moves.slice(moveCountRef.current);
-  const moveWasMade = newMoves.length > 0;
-  moveCountRef.current = moves.length;
-  const ownDrawOffer = playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
-  const opponentDrawOffer = playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
-  if (moveWasMade) {
-    drawPendingRef.current = false;
-    setDrawPending(false);
-    setDrawOffer(false);
-  } else {
-    if (drawPendingRef.current && !ownDrawOffer) {
-      drawPendingRef.current = false;
-      setDrawPending(false);
-      setGameStatus('Draw offer refused');
-    }
-    setDrawOffer(Boolean(opponentDrawOffer));
-  }
+        const lastUciMove =
+          moves[moves.length - 1];
 
-  setMoveHistory(
-    getMoveHistory(initialFenRef.current, event.moves)
-  );
+        const newMoves = moves.slice(
+          moveCountRef.current,
+        );
 
+        const moveWasMade =
+          newMoves.length > 0;
 
+        moveCountRef.current =
+          moves.length;
 
-  setLastMove(
-    lastUciMove
-      ? {
-          from: lastUciMove.slice(0, 2),
-          to: lastUciMove.slice(2, 4),
+        const ownDrawOffer =
+          playerColorRef.current === 'w'
+            ? event.wdraw
+            : event.bdraw;
+
+        const opponentDrawOffer =
+          playerColorRef.current === 'w'
+            ? event.bdraw
+            : event.wdraw;
+
+        if (moveWasMade) {
+          drawPendingRef.current = false;
+          setDrawPending(false);
+          setDrawOffer(false);
+        } else {
+          if (
+            drawPendingRef.current &&
+            !ownDrawOffer
+          ) {
+            drawPendingRef.current = false;
+            setDrawPending(false);
+            setGameStatus(
+              'Draw offer refused',
+            );
+          }
+
+          setDrawOffer(
+            Boolean(opponentDrawOffer),
+          );
         }
-      : null
-  );
 
-  if (newMoves.length) {
-    const newCapturedPieces = getCapturedPieces(fenRef.current, newMoves);
-    if (newCapturedPieces.w.length || newCapturedPieces.b.length) {
-      setCapturedPieces((current) => ({
-        w: [...current.w, ...newCapturedPieces.w],
-        b: [...current.b, ...newCapturedPieces.b],
-      }));
-    }
-  }
-  fenRef.current = nextFen;
-  setFen(nextFen);
-  if (selectedSquareRef.current) {
-    const updatedMoves = getLegalMovesForPiece(nextFen, selectedSquareRef.current);
-    if (updatedMoves.length > 0) {
-      setLegalMoves(updatedMoves.map((move) => move.to));
-    } else {
-      clearSelection();
-    }
-  }
+        setMoveHistory(
+          getMoveHistory(
+            initialFenRef.current,
+            event.moves,
+          ),
+        );
 
-  setClockSnapshot((current) => ({
-    ...current,
-    wtime: clockValue(event.wtime),
-    btime: clockValue(event.btime),
-    turn: new Chess(nextFen).turn(),
-    status: event.status,
-    updatedAt: Date.now(),
-  }));
+        setLastMove(
+          lastUciMove
+            ? {
+                from: lastUciMove.slice(0, 2),
+                to: lastUciMove.slice(2, 4),
+              }
+            : null,
+        );
 
-  if (event.status !== 'started') {
-    setGameStatus(`Game ${event.status}`);
-    setGameId(null);
-    clearSelection();
-  }
-}
+        if (newMoves.length) {
+          const newCapturedPieces =
+            getCapturedPieces(
+              fenRef.current,
+              newMoves,
+            );
 
+          if (
+            newCapturedPieces.w.length ||
+            newCapturedPieces.b.length
+          ) {
+            setCapturedPieces((current) => ({
+              w: [
+                ...current.w,
+                ...newCapturedPieces.w,
+              ],
+              b: [
+                ...current.b,
+                ...newCapturedPieces.b,
+              ],
+            }));
+          }
+        }
+
+        /*
+         * Update the authoritative position BEFORE
+         * reconciling premoves.
+         */
+        fenRef.current = nextFen;
+        setFen(nextFen);
+
+        /*
+         * This is the important premove reconciliation
+         * point. Every authoritative gameState is checked.
+         */
+        reconcilePremoves(
+          nextFen,
+          newMoves,
+        );
+
+        if (selectedSquareRef.current) {
+          const updatedMoves =
+            getLegalMovesForPiece(
+              nextFen,
+              selectedSquareRef.current,
+            );
+
+          if (updatedMoves.length > 0) {
+            setLegalMoves(
+              updatedMoves.map(
+                (move) => move.to,
+              ),
+            );
+          } else {
+            clearSelection();
+          }
+        }
+
+        setClockSnapshot((current) => ({
+          ...current,
+          wtime: clockValue(event.wtime),
+          btime: clockValue(event.btime),
+          turn: new Chess(nextFen).turn(),
+          status: event.status,
+          updatedAt: Date.now(),
+        }));
+
+        if (event.status !== 'started') {
+          setGameStatus(
+            `Game ${event.status}`,
+          );
+
+          fenRef.current = nextFen;
+          setFen(nextFen);
+
+
+
+
+          gameIdRef.current = null;
+          setGameId(null);
+
+          initialFenRef.current = null;
+          moveCountRef.current = 0;
+
+          setGameMode(GAME_MODE.LOCAL);
+
+          clearSelection();
+          clearPremoves();
+        }
+      }
     };
 
     socket.onerror = () => {
-      if (socketRef.current === socket) setGameStatus('Game server connection failed');
+      if (socketRef.current === socket) {
+        setGameStatus(
+          'Game server connection failed',
+        );
+      }
     };
+
     socket.onclose = () => {
-      if (socketRef.current !== socket) return;
+      if (socketRef.current !== socket) {
+        return;
+      }
+
       socketRef.current = null;
       setSocketReady(false);
-      setGameStatus('Game server disconnected');
+
+      clearPremoves();
+
+      setGameStatus(
+        'Game server disconnected',
+      );
     };
 
     return () => {
       setSocketReady(false);
+
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+
       socket.close();
     };
   }, [account]);
 
   function handlePlay() {
-    if (!socketReady || socketRef.current?.readyState !== WebSocket.OPEN) {
-      setGameStatus('Game server is not connected');
-      return;
-    }
-
-    const newGame = new Chess();
-    fenRef.current = newGame.fen();
-    setFen(fenRef.current);
-    setCapturedPieces({ w: [], b: [] });
-    setClockSnapshot(null);
-    initialFenRef.current = null;
-    playerColorRef.current = null;
-    moveCountRef.current = 0;
-    drawPendingRef.current = false;
-    setGameId(null);
-    setPlayerColor(null);
-    setLastMove(null);
-    setDrawOffer(false);
-    setDrawPending(false);
-    setChatMessages([]);
-    setChatText('');
-    setChatError('');
-    clearSelection();
-    closePromotionChoice();
-    setMatchmaking(true);
-    setGameStatus('Searching for an opponent...');
-
-    fetch('/api/game/start', { method: 'POST', credentials: 'include' })
-      .then((response) => response.json().then((data) => ({ response, data })))
-      .then(({ response, data }) => {
-        if (!response.ok) throw new Error(data.error ?? 'Unable to start game search');
-      })
-      .catch((error) => {
-        setMatchmaking(false);
-        setGameStatus(error.message);
-      });
+  if (
+    !socketReady ||
+    socketRef.current?.readyState !== WebSocket.OPEN
+  ) {
+    setGameStatus('Game server is not connected');
+    return;
   }
+
+  const { time, increment, rated } = selectedTimeControl;
+
+  if (rated && !isRatedAllowed(time)) {
+    setGameStatus('Rated games require Rapid or slower.');
+    return;
+  }
+
+  clearPremoves();
+
+  const newGame = new Chess();
+  fenRef.current = newGame.fen();
+  setFen(fenRef.current);
+
+  setCapturedPieces({ w: [], b: [] });
+  setClockSnapshot(null);
+
+  initialFenRef.current = null;
+  playerColorRef.current = null;
+  gameIdRef.current = null;
+  moveCountRef.current = 0;
+
+  drawPendingRef.current = false;
+
+  setGameId(null);
+  setGameMode(GAME_MODE.LOCAL);
+  setPlayerColor(null);
+
+  setLastMove(null);
+  setDrawOffer(false);
+  setDrawPending(false);
+
+  setChatMessages([]);
+  setChatText('');
+  setChatError('');
+
+  clearSelection();
+  closePromotionChoice();
+  clearPremoves();
+
+  setMatchmaking(true);
+  setGameStatus('Searching for an opponent...');
+
+  fetch('/api/game/start', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ time, increment, rated }),
+  })
+    .then((response) =>
+      response.json().then((data) => ({ response, data })),
+    )
+    .then(({ response, data }) => {
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Unable to start game search');
+      }
+    })
+    .catch((error) => {
+      setMatchmaking(false);
+      setGameStatus(error.message);
+    });
+}
 
   async function handleCancel() {
     setCancellingMatchmaking(true);
+
     try {
-      const response = await fetch('/api/game/cancel', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      const data = response.status === 204 ? {} : await response.json();
-      if (!response.ok && response.status !== 404) {
-        throw new Error(data.error ?? 'Unable to cancel game search');
+      const response = await fetch(
+        '/api/game/cancel',
+        {
+          method: 'POST',
+          credentials: 'include',
+        },
+      );
+
+      const data =
+        response.status === 204
+          ? {}
+          : await response.json();
+
+      if (
+        !response.ok &&
+        response.status !== 404
+      ) {
+        throw new Error(
+          data.error ??
+            'Unable to cancel game search',
+        );
       }
+
       setMatchmaking(false);
-      setGameStatus('Game search cancelled');
+      setGameStatus(
+        'Game search cancelled',
+      );
     } catch (error) {
       setGameStatus(error.message);
     } finally {
@@ -692,38 +1497,32 @@ function App() {
   }
 
   function handleLogin() {
-    window.location.assign('/api/auth/lichess');
+    window.location.assign(
+      '/api/auth/lichess',
+    );
   }
 
   async function handleLogout() {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      clearPremoves();
+
+      gameIdRef.current = null;
+      initialFenRef.current = null;
+      playerColorRef.current = null;
+
+      setGameId(null);
+      setPlayerColor(null);
+      setGameMode(GAME_MODE.LOCAL);
+
       setAccount(null);
     } catch {
-      // ignore logout errors and keep the UI responsive
+      // Keep the UI responsive.
     }
-  }
-
-  function selectSquare(square) {
-    const piece = game.get(square);
-    if (gameId && (
-      !piece
-      || piece.color !== playerColor
-      || game.turn() !== playerColor
-    )) {
-      clearSelection();
-      return;
-    }
-
-    const moves = getLegalMovesForPiece(fen, square);
-    if (moves.length === 0) {
-      clearSelection();
-      return;
-    }
-
-    selectedSquareRef.current = square;
-    setSelectedSquare(square);
-    setLegalMoves(moves.map((move) => move.to));
   }
 
   function handleSquareClick(square) {
@@ -732,6 +1531,9 @@ function App() {
       return;
     }
 
+    if (shouldCancelPremovesOnClick(square)) return;
+
+
     if (selectedSquare) {
       if (square === selectedSquare) {
         clearSelection();
@@ -739,12 +1541,60 @@ function App() {
       }
 
       if (legalMoves.includes(square)) {
-        const selectedPiece = game.get(selectedSquare);
-        const canMove = !gameId || (
-          selectedPiece?.color === playerColor && game.turn() === playerColor
-        );
-        if (!canMove) return;
-        makeMove(selectedSquare, square);
+        const color = isLichessGame
+          ? playerColorRef.current
+          : realGame.turn();
+
+        const isOurTurn =
+          realGame.turn() === color;
+
+        if (isOurTurn) {
+          const selectedPiece =
+            realGame.get(selectedSquare);
+
+          if (!selectedPiece) {
+            clearSelection();
+            return;
+          }
+
+          if (isLichessGame) {
+            const canMove = canPlayerMove(
+              gameMode,
+              {
+                piece: selectedPiece,
+                playerColor,
+                turn: realGame.turn(),
+              },
+            );
+
+            if (!canMove) {
+              return;
+            }
+          }
+
+          /*
+          * A manual move takes precedence over
+          * any unsent premove queue.
+          */
+          if (premoveQueueRef.current.length) {
+            clearPremoves();
+          }
+
+          makeMove(
+            selectedSquare,
+            square,
+          );
+
+          return;
+        }
+
+        if (isLichessGame) {
+          queueOrPromptPremove(
+            selectedSquare,
+            square,
+          );
+        }
+
         return;
       }
     }
@@ -754,100 +1604,316 @@ function App() {
 
   function handlePieceClick(event, square) {
     event.stopPropagation();
+
     if (suppressPieceClickRef.current) {
       suppressPieceClickRef.current = false;
       return;
     }
+
     handleSquareClick(square);
   }
 
-  function makeMove(from, to, promotion = '', shouldAnimate = true) {
-    const movingPiece = game.get(from);
-    const shouldPromptPromotion = movingPiece?.type === 'p' && ['1', '8'].includes(to[1]) && !promotion;
+  function shouldCancelPremovesOnClick(square) {
+    const now = Date.now();
+    const last = lastClickRef.current;
+    const isDoubleClick =
+      last.square === square &&
+      now - last.time < DOUBLE_CLICK_MS;
 
-    if (shouldPromptPromotion) {
-      setPromotionChoice({ from, to, color: movingPiece.color });
-      return;
-    }
+    lastClickRef.current = { square, time: now };
 
-    if (gameId) {
-      if (!movingPiece || movingPiece.color !== playerColor || game.turn() !== playerColor) return;
-
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) {
-        setDrawOffer(false);
-        socket.send(JSON.stringify({
-          type: 'game.move',
-          gameId,
-          uci: `${from}${to}${promotion}`,
-        }));
-      }
-      closePromotionChoice();
+    if (isDoubleClick && premoveSquares.has(square)) {
+      clearPremoves();
       clearSelection();
-      return;
+      return true;
     }
-
-    const nextGame = new Chess(fen);
-
-    try {
-      const playedMove = nextGame.move({ from, to, promotion });
-      if (shouldAnimate) animateMove(from, to, movingPiece);
-      setLastMove({
-        from: playedMove.from,
-        to: playedMove.to,
-      });
-      fenRef.current = nextGame.fen();
-      setFen(fenRef.current);
-
-      //calculate captured pieces and update state (derived)
-      if (playedMove.captured) {
-        setCapturedPieces((current) => ({
-          ...current,
-          [playedMove.color === 'w' ? 'b' : 'w']: [
-            ...current[playedMove.color === 'w' ? 'b' : 'w'],
-            playedMove.captured,
-          ],
-        }));
-      }
-
-      closePromotionChoice();
-      clearSelection();
-    } catch {
-      closePromotionChoice();
-      clearSelection();
-    }
-
-
+    return false;
   }
+
+
+  function makeMove(
+  from,
+  to,
+  promotion = '',
+  shouldAnimate = true,
+) {
+  const currentFen = fenRef.current;
+  const currentGame = new Chess(currentFen);
+  const movingPiece = currentGame.get(from);
+
+  if (!movingPiece) {
+    return;
+  }
+
+  const shouldPromptPromotion =
+    movingPiece.type === 'p' &&
+    ['1', '8'].includes(to[1]) &&
+    !promotion;
+
+  if (shouldPromptPromotion) {
+    setPromotionChoice({
+      from,
+      to,
+      color: movingPiece.color,
+      premove: false,
+    });
+
+    return;
+  }
+
+  if (isLichessGame) {
+    if (
+      !canPlayerMove(gameMode, {
+        piece: movingPiece,
+        playerColor,
+        turn: currentGame.turn(),
+      })
+    ) {
+      return;
+    }
+
+    const sent = sendOnlineMove(
+      from,
+      to,
+      promotion,
+    );
+
+    if (!sent) {
+      return;
+    }
+
+    clearPremoves();
+    closePromotionChoice();
+    clearSelection();
+
+    return;
+  }
+
+  if (gameMode !== GAME_MODE.LOCAL) {
+    return;
+  }
+
+  try {
+    const playedMove = currentGame.move({
+      from,
+      to,
+      promotion: promotion || undefined,
+    });
+
+    if (!playedMove) {
+      clearSelection();
+      return;
+    }
+
+    if (shouldAnimate) {
+      animateMove(
+        from,
+        to,
+        movingPiece,
+      );
+    }
+
+    setLastMove({
+      from: playedMove.from,
+      to: playedMove.to,
+    });
+
+    const nextFen = currentGame.fen();
+
+    fenRef.current = nextFen;
+    setFen(nextFen);
+
+    if (playedMove.captured) {
+      const capturedColor =
+        playedMove.color === 'w'
+          ? 'b'
+          : 'w';
+
+      setCapturedPieces((current) => ({
+        ...current,
+        [capturedColor]: [
+          ...current[capturedColor],
+          playedMove.captured,
+        ],
+      }));
+    }
+
+    closePromotionChoice();
+    clearSelection();
+  } catch {
+    closePromotionChoice();
+    clearSelection();
+  }
+}
 
   function handlePromotionChoice(pieceType) {
     if (!promotionChoice) return;
-    makeMove(promotionChoice.from, promotionChoice.to, pieceType);
+
+    const choice = promotionChoice;
+
+    if (choice.premove) {
+      const queued = queuePremove(
+        choice.from,
+        choice.to,
+        pieceType,
+      );
+
+      if (queued) {
+        closePromotionChoice();
+        clearSelection();
+      }
+
+      return;
+    }
+
+    makeMove(
+      choice.from,
+      choice.to,
+      pieceType,
+    );
+  }
+
+  function tryExecuteNextPremove() {
+    if (!gameIdRef.current || premoveSendingRef.current) return;
+
+    const queue = premoveQueueRef.current;
+    if (!queue.length) return;
+
+    const color = playerColorRef.current;
+    if (!color) { clearPremoves(); return; }
+
+    const currentFen = fenRef.current;
+    const currentGame = new Chess(currentFen);
+    if (currentGame.turn() !== color) return;
+
+    const move = queue[0];
+
+    // A premove onto our own piece means the expected
+    // capture never happened -> drop it.
+    const destination = currentGame.get(move.to);
+    if (destination && destination.color === color) {
+      clearPremoves();
+      return;
+    }
+
+    // Use the same simulation used for validation, so recaptures
+    // and en passant are handled identically.
+    const simulated = applyPremove(currentFen, move, color, false);
+    if (!simulated) { clearPremoves(); return; }
+
+    const sent = sendOnlineMove(
+      move.from,
+      move.to,
+      move.promotion ?? '',
+    );
+
+    if (!sent) return;
+    premoveSendingRef.current = true;
+  }
+
+
+  function queueOrPromptPremove(from, to) {
+    const piece = game.get(from);
+
+    if (!piece) return;
+
+    const needsPromotion =
+      piece.type === 'p' &&
+      ['1', '8'].includes(to[1]);
+
+    if (needsPromotion) {
+      setPromotionChoice({
+        from,
+        to,
+        color: piece.color,
+        premove: true,
+      });
+
+      return;
+    }
+
+    if (queuePremove(from, to)) {
+      clearSelection();
+    }
   }
 
   function handlePointerDown(event, square) {
-    if (selectedSquare && square !== selectedSquare && legalMoves.includes(square)) return;
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    suppressPieceClickRef.current = true;
-    setPointerDrag({
-      pointerId: event.pointerId,
-      square,
-      destination: square,
-      moved: false,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      piece: game.get(square),
-    });
-    setDraggingSquare(square);
-    selectSquare(square);
+  /*
+   * Clicking a legal destination while a piece is selected
+   * belongs to the click-to-move path, not drag initiation.
+   */
+  if (
+    selectedSquare &&
+    square !== selectedSquare &&
+    legalMoves.includes(square)
+  ) {
+    return;
   }
 
-  function handlePointerMove(event) {
-    if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+  const piece = game.get(square);
 
-    const destination = document.elementFromPoint(event.clientX, event.clientY)
-      ?.closest('[data-square]')?.dataset.square;
+  const color = isLichessGame
+    ? playerColorRef.current
+    : realGame.turn();
+
+  if (!piece || !color) {
+    return;
+  }
+
+  if (piece.color !== color) {
+    return;
+  }
+
+  /*
+   * Local games only allow the side to move.
+   *
+   * Online games allow dragging our pieces during the
+   * opponent's turn to create premoves.
+   */
+  if (
+    !isLichessGame &&
+    realGame.turn() !== color
+  ) {
+    return;
+  }
+
+  event.currentTarget.setPointerCapture(
+    event.pointerId,
+  );
+
+  suppressPieceClickRef.current = true;
+
+  setPointerDrag({
+    pointerId: event.pointerId,
+    square,
+    destination: square,
+    moved: false,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    piece,
+  });
+
+  setDraggingSquare(square);
+  selectSquare(square);
+}
+
+  function handlePointerMove(event) {
+    if (
+      !pointerDrag ||
+      pointerDrag.pointerId !==
+        event.pointerId
+    ) {
+      return;
+    }
+
+    const destination =
+      document
+        .elementFromPoint(
+          event.clientX,
+          event.clientY,
+        )
+        ?.closest('[data-square]')
+        ?.dataset.square;
 
     if (destination) {
       setPointerDrag((current) => ({
@@ -855,120 +1921,341 @@ function App() {
         destination,
         clientX: event.clientX,
         clientY: event.clientY,
-        moved: current.moved || destination !== current.square,
+        moved:
+          current.moved ||
+          destination !== current.square,
       }));
     }
   }
 
   function handlePointerUp(event) {
-    if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+  if (
+    !pointerDrag ||
+    pointerDrag.pointerId !== event.pointerId
+  ) {
+    return;
+  }
 
-    event.currentTarget.releasePointerCapture(event.pointerId);
+  if (!pointerDrag.moved) {
+    shouldCancelPremovesOnClick(pointerDrag.square);
+  }
 
-    if (pointerDrag.moved) {
-      const canMove = getLegalMovesForPiece(fen, pointerDrag.square)
-        .some((move) => move.to === pointerDrag.destination);
-      if (canMove) makeMove(pointerDrag.square, pointerDrag.destination, '', false);
+  try {
+    if (
+      event.currentTarget.hasPointerCapture(
+        event.pointerId,
+      )
+    ) {
+      event.currentTarget.releasePointerCapture(
+        event.pointerId,
+      );
+    }
+  } catch {
+    // Pointer capture may already have been released.
+  }
+
+  if (pointerDrag.moved) {
+    const color = isLichessGame
+      ? playerColorRef.current
+      : realGame.turn();
+
+    const isOurTurn = realGame.turn() === color;
+
+    const availableMoves = isOurTurn
+      ? getLegalMovesForPiece(
+          fenRef.current,
+          pointerDrag.square,
+        )
+      : isLichessGame
+        ? getAvailablePremoveMoves(
+            pointerDrag.square,
+          )
+        : [];
+
+    const canMove = availableMoves.some(
+      (move) =>
+        move.to === pointerDrag.destination,
+    );
+
+    if (canMove) {
+      if (isOurTurn) {
+        if (premoveQueueRef.current.length) {
+          clearPremoves();
+        }
+
+        makeMove(
+          pointerDrag.square,
+          pointerDrag.destination,
+          '',
+          false,
+        );
+      } else if (isLichessGame) {
+        queueOrPromptPremove(
+          pointerDrag.square,
+          pointerDrag.destination,
+        );
+      }
+    }
+  }
+
+  setPointerDrag(null);
+  setDraggingSquare(null);
+
+  window.setTimeout(() => {
+    suppressPieceClickRef.current = false;
+  }, 0);
+}
+
+  function cancelLastPremove() {
+    /*
+     * Never remove the move currently waiting for
+     * server confirmation. Doing so would leave the
+     * sending lock without a corresponding queue entry.
+     */
+    if (premoveSendingRef.current) {
+      return;
     }
 
-    setPointerDrag(null);
-    setDraggingSquare(null);
-    window.setTimeout(() => {
-      suppressPieceClickRef.current = false;
-    }, 0);
+    const queue =
+      premoveQueueRef.current;
+
+    if (!queue.length) {
+      return;
+    }
+
+    const nextQueue =
+      queue.slice(0, -1);
+
+    premoveQueueRef.current =
+      nextQueue;
+
+    setPremoveQueue(nextQueue);
   }
 
   function handlePointerCancel(event) {
-    if (pointerDrag?.pointerId === event.pointerId) {
+    if (
+      pointerDrag?.pointerId ===
+      event.pointerId
+    ) {
       setPointerDrag(null);
       setDraggingSquare(null);
-      suppressPieceClickRef.current = false;
+      suppressPieceClickRef.current =
+        false;
     }
   }
 
+  function sendOnlineMove(
+    from,
+    to,
+    promotion = '',
+  ) {
+    const socket = socketRef.current;
+    const currentGameId =
+      gameIdRef.current;
+
+    if (
+      socket?.readyState !==
+        WebSocket.OPEN ||
+      !currentGameId
+    ) {
+      return false;
+    }
+
+    setDrawOffer(false);
+
+    socket.send(
+      JSON.stringify({
+        type: 'game.move',
+        gameId: currentGameId,
+        uci: `${from}${to}${promotion}`,
+      }),
+    );
+
+    return true;
+  }
+
+  function queuePremove(from, to, promotion = '') {
+    const color = playerColorRef.current;
+    if (!gameIdRef.current || !color) return false;
+
+    const nextMove = { from, to, promotion };
+
+    // Build the FEN that includes the existing queue.
+    const baseFen = premoveQueueRef.current.length
+      ? getPremovePosition(fenRef.current, premoveQueueRef.current, color) ?? fenRef.current
+      : fenRef.current;
+
+    const valid = validatePremoveSequence(baseFen, [nextMove], color, true);
+    if (!valid) return false;
+
+    const nextQueue = [...premoveQueueRef.current, nextMove];
+    premoveQueueRef.current = nextQueue;
+    setPremoveQueue(nextQueue);
+
+    if (new Chess(fenRef.current).turn() === color && !premoveSendingRef.current) {
+      window.setTimeout(() => tryExecuteNextPremove(), 0);
+    }
+
+    return true;
+  }
+
+  
+
+
   return (
     <main className="app-shell">
-      <section className="intro-panel" aria-labelledby="page-title">
+      <section
+        className="intro-panel"
+        aria-labelledby="page-title"
+      >
         <h2>Chess Quest</h2>
 
         <div className="account-panel">
           {authLoading ? (
-            <span className="account-status">Checking account...</span>
+            <span className="account-status">
+              Checking account...
+            </span>
           ) : account ? (
             <>
               <span className="account-status">
-                Connected as <strong>{account.username}</strong> 
-                ({account.perfs.rapid.rating || 'unrated'})
+                Connected as{' '}
+                <strong>
+                  {account.username}
+                </strong>{' '}
+                (
+                {account.perfs.rapid.rating ||
+                  'unrated'}
+                )
               </span>
-              <button className="account-button secondary" type="button" onClick={handleLogout}>
+
+              <button
+                className="account-button secondary"
+                type="button"
+                onClick={handleLogout}
+              >
                 Log out
               </button>
             </>
           ) : (
-            <button className="account-button" type="button" onClick={handleLogin}>
+            <button
+              className="account-button"
+              type="button"
+              onClick={handleLogin}
+            >
               Connect Lichess
             </button>
           )}
         </div>
 
-        <div className="account-panel" aria-label="Right rail view">
-          <button className="account-button secondary" type="button" onClick={() => setRightRailView('hello')}>
-            Select Skin
-          </button>
-          <button className="account-button secondary" type="button" onClick={() => setRightRailView('game')}>
-            Show game and chat
-          </button>
+        <div
+          className="account-panel"
+          aria-label="Right rail view"
+        >
           <button
             className="account-button secondary"
             type="button"
-            onClick={() => setRightRailView('out-of-game')}
-            disabled={Boolean(gameStatus=='Game in progress' || gameStatus=='Searching for an opponent...' || gameStatus=='Draw offered')}
+            onClick={() =>
+              setRightRailView('hello')
+            }
+          >
+            Select Skin
+          </button>
+
+          <button
+            className="account-button secondary"
+            type="button"
+            onClick={() =>
+              setRightRailView('game')
+            }
+          >
+            Show game and chat
+          </button>
+
+          <button
+            className="account-button secondary"
+            type="button"
+            onClick={() =>
+              setRightRailView('out-of-game')
+            }
+            disabled={
+              gameStatus ===
+                'Game in progress' ||
+              gameStatus ===
+                'Searching for an opponent...' ||
+              gameStatus ===
+                'Draw offered'
+            }
           >
             Out of game
           </button>
         </div>
 
         {gameStatus && (
-          <p className="game-status" aria-live="polite">
+          <p
+            className="game-status"
+            aria-live="polite"
+          >
             {gameStatus}
           </p>
         )}
       </section>
 
-      <section className="board-panel" aria-label="Chessboard sandbox">
+      <section
+        className="board-panel"
+        aria-label="Chessboard sandbox"
+      >
         <div className="board-game-area">
-          <div className="board-frame" ref={boardFrameRef}>
+          <div
+            className="board-frame"
+            ref={boardFrameRef}
+          >
             {promotionChoice && (
               <div
                 className="promotion-popup"
                 role="dialog"
                 aria-label="Choose a promotion piece"
-                style={{ left: `${promotionPopupStyle.left}px`, top: `${promotionPopupStyle.top}px` }}
-                onClick={(event) => event.stopPropagation()}
+                style={{
+                  left: `${promotionPopupStyle.left}px`,
+                  top: `${promotionPopupStyle.top}px`,
+                }}
+                onClick={(event) =>
+                  event.stopPropagation()
+                }
               >
-                {promotionOptions.map((pieceType) => (
-                  <button
-                    key={pieceType}
-                    type="button"
-                    className="promotion-option"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handlePromotionChoice(pieceType);
-                    }}
-                    aria-label={`Promote pawn to ${getPromotionLabel(pieceType)}`}
-                  >
-                    <PieceVisual
-                      color={promotionChoice.color}
-                      type={pieceType}
-                      skinFolder={getSkinFolderForColor(promotionChoice.color)}
-                      className="promotion-piece"
-                    />
-                  </button>
-                ))}
+                {promotionOptions.map(
+                  (pieceType) => (
+                    <button
+                      key={pieceType}
+                      type="button"
+                      className="promotion-option"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handlePromotionChoice(
+                          pieceType,
+                        );
+                      }}
+                      aria-label={`Promote pawn to ${getPromotionLabel(
+                        pieceType,
+                      )}`}
+                    >
+                      <PieceVisual
+                        color={
+                          promotionChoice.color
+                        }
+                        type={pieceType}
+                        skinFolder={getSkinFolderForColor(
+                          promotionChoice.color,
+                        )}
+                        className="promotion-piece"
+                      />
+                    </button>
+                  ),
+                )}
               </div>
             )}
 
-              {pointerDrag?.moved && pointerDrag.piece && (
+            {pointerDrag?.moved &&
+              pointerDrag.piece && (
                 <div
                   className="piece dragged-piece"
                   style={{
@@ -977,22 +2264,28 @@ function App() {
                   }}
                 >
                   <PieceVisual
-                    color={pointerDrag.piece.color}
-                    type={pointerDrag.piece.type}
-                    skinFolder={getSkinFolderForColor(pointerDrag.piece.color)}
+                    color={
+                      pointerDrag.piece.color
+                    }
+                    type={
+                      pointerDrag.piece.type
+                    }
+                    skinFolder={getSkinFolderForColor(
+                      pointerDrag.piece.color,
+                    )}
                   />
                 </div>
               )}
 
-
-
-
-
-
             <div className="board-layout">
-              <div className="rank-labels" aria-hidden="true">
+              <div
+                className="rank-labels"
+                aria-hidden="true"
+              >
                 {boardRanks.map((rank) => (
-                  <span key={rank}>{rank}</span>
+                  <span key={rank}>
+                    {rank}
+                  </span>
                 ))}
               </div>
 
@@ -1001,355 +2294,599 @@ function App() {
                   game={game}
                   boardFiles={boardFiles}
                   boardRanks={boardRanks}
-                  selectedSquare={selectedSquare}
+                  selectedSquare={
+                    selectedSquare
+                  }
                   lastMove={lastMove}
                   legalMoves={legalMoves}
-                  draggingSquare={draggingSquare}
-                  suppressPieceClickRef={suppressPieceClickRef}
-                  onSquareClick={handleSquareClick}
-                  onPieceClick={handlePieceClick}
-                  onPointerDown={handlePointerDown}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerCancel}
+                  draggingSquare={
+                    draggingSquare
+                  }
+                  onSquareClick={
+                    handleSquareClick
+                  }
+                  onPieceClick={
+                    handlePieceClick
+                  }
+                  onPointerDown={
+                    handlePointerDown
+                  }
+                  onPointerMove={
+                    handlePointerMove
+                  }
+                  onPointerUp={
+                    handlePointerUp
+                  }
+                  onPointerCancel={
+                    handlePointerCancel
+                  }
                   onBoardClick={() => {
                     if (promotionChoice) {
                       closePromotionChoice();
                     }
                   }}
-                  moveAnimation={moveAnimation}
-                  onMoveAnimationEnd={finishMoveAnimation}
-                  pointerDrag={pointerDrag}
-                  skinFolder={selectedSkinFolder}
-                  playerColor={playerColor}
-                  opponentSkinFolder={selectedOpponentSkinFolder}
-                  checkedSquare={checkedSquare}
+                  moveAnimation={
+                    moveAnimation
+                  }
+                  onMoveAnimationEnd={
+                    finishMoveAnimation
+                  }
+                  skinFolder={
+                    selectedSkinFolder
+                  }
+                  playerColor={
+                    playerColor
+                  }
+                  opponentSkinFolder={
+                    selectedOpponentSkinFolder
+                  }
+                  checkedSquare={
+                    checkedSquare
+                  }
+                  premoveSquares={
+                    premoveSquares
+                  }
                 />
 
-                <div className="file-labels" aria-hidden="true">
+                <div
+                  className="file-labels"
+                  aria-hidden="true"
+                >
                   {boardFiles.map((file) => (
-                    <span key={file}>{file}</span>
+                    <span key={file}>
+                      {file}
+                    </span>
                   ))}
                 </div>
               </div>
             </div>
           </div>
-
-          
-
         </div>
-        
       </section>
 
-
-
-
-
-
-
-      <aside className="right-rail" aria-label="Game controls and chat">
-  {(() => {
-    switch (rightRailView) {
-      case 'hello':
-        return (
-          <div className="skin-picker" aria-label="Choose a piece skin">
-            <div className="skin-picker-heading">
-              <span className="chat-kicker">Piece skins</span>
-              <h2>Choose a set</h2>
-              <label className="skin-opponent-toggle">
-                <input
-                  type="checkbox"
-                  checked={selectingOpponentSkin}
-                  onChange={(event) => setSelectingOpponentSkin(event.target.checked)}
-                />
-                Select for opponent
-              </label>
-            </div>
-            <div className="skin-options">
-              {skinFolders.map((folder) => (
-                <button
-                  className={`skin-option ${
-                    selectedSkinFolder === folder
-                      ? 'selected player-selected'
-                      : ''
-                  } ${
-                    selectedOpponentSkinFolder === folder
-                      ? 'selected opponent-selected'
-                      : ''
-                  }`}
-                  key={folder}
-                  type="button"
-                  onClick={() => selectSkinFolder(folder)}
-                  disabled={ selectingOpponentSkin ? selectedSkinFolder === folder : selectedOpponentSkinFolder === folder }
-                  aria-label={
-                    selectedSkinFolder === folder
-                      ? `${folder} selected for player`
-                      : selectedOpponentSkinFolder === folder
-                        ? `${folder} selected for opponent`
-                        : `Equip ${folder} piece skin`
-                  }
+      <aside
+        className="right-rail"
+        aria-label="Game controls and chat"
+      >
+        {(() => {
+          switch (rightRailView) {
+            case 'hello':
+              return (
+                <div
+                  className="skin-picker"
+                  aria-label="Choose a piece skin"
                 >
-                  <img src={`/${folder}/king.png`} alt={`${folder} king skin`} />
-                  <span>{folder}</span>
-                </button>
+                  <div className="skin-picker-heading">
+                    <span className="chat-kicker">
+                      Piece skins
+                    </span>
 
-              ))}
-            </div>
-            {!skinFolders.length && <p className="skin-empty">No piece skins found.</p>}
-          </div>
-        );
+                    <h2>Choose a set</h2>
 
-      case 'out-of-game':
-        return <div>out of game</div>;
+                    <label className="skin-opponent-toggle">
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectingOpponentSkin
+                        }
+                        onChange={(event) =>
+                          setSelectingOpponentSkin(
+                            event.target.checked,
+                          )
+                        }
+                      />
 
-      default:
-        return (
-          <>
-            {clockSnapshot?.wtime != null &&
-              clockSnapshot?.btime != null && (
-                <div className="clock-panel" aria-label="Time remaining">
-                  <div
-                    className={`clock-card ${
-                      clockSnapshot.turn === 'w' ? 'active' : ''
-                    } ${whiteTime < 30000 ? 'low-time' : ''}`}
-                  >
-                    <span className="clock-player">White</span>
-                    <strong>{formatClock(whiteTime)}</strong>
-
-                    <div className="capture-group">
-                      <div className="capture-pieces">
-                        {capturedPieces.b.map((piece, index) => (
-                          <span
-                            className="captured-piece"
-                            key={`${piece}-${index}`}
-                          >
-                            <PieceVisual color="b" type={piece} skinFolder={getSkinFolderForColor('b')} />
-                          </span>
-                        ))}
-                      </div>
-                    </div>
+                      Select for opponent
+                    </label>
                   </div>
 
-                  <div
-                    className={`clock-card ${
-                      clockSnapshot.turn === 'b' ? 'active' : ''
-                    } ${blackTime < 30000 ? 'low-time' : ''}`}
-                  >
-                    <span className="clock-player">Black</span>
-                    <strong>{formatClock(blackTime)}</strong>
+                  <div className="skin-options">
+                    {skinFolders.map(
+                      (folder) => (
+                        <button
+                          className={`skin-option ${
+                            selectedSkinFolder ===
+                            folder
+                              ? 'selected player-selected'
+                              : ''
+                          } ${
+                            selectedOpponentSkinFolder ===
+                            folder
+                              ? 'selected opponent-selected'
+                              : ''
+                          }`}
+                          key={folder}
+                          type="button"
+                          onClick={() =>
+                            selectSkinFolder(
+                              folder,
+                            )
+                          }
+                          disabled={
+                            selectingOpponentSkin
+                              ? selectedSkinFolder ===
+                                folder
+                              : selectedOpponentSkinFolder ===
+                                folder
+                          }
+                          aria-label={
+                            selectedSkinFolder ===
+                            folder
+                              ? `${folder} selected for player`
+                              : selectedOpponentSkinFolder ===
+                                folder
+                                ? `${folder} selected for opponent`
+                                : `Equip ${folder} piece skin`
+                          }
+                        >
+                          <img
+                            src={`/${folder}/king.png`}
+                            alt={`${folder} king skin`}
+                          />
 
-                    <div className="capture-group">
-                      <div className="capture-pieces">
-                        {capturedPieces.w.map((piece, index) => (
-                          <span
-                            className="captured-piece"
-                            key={`${piece}-${index}`}
-                          >
-                            <PieceVisual color="w" type={piece} skinFolder={getSkinFolderForColor('w')} />
+                          <span>
+                            {folder}
                           </span>
-                        ))}
-                      </div>
-                    </div>
+                        </button>
+                      ),
+                    )}
                   </div>
+
+                  {!skinFolders.length && (
+                    <p className="skin-empty">
+                      No piece skins found.
+                    </p>
+                  )}
                 </div>
-              )}
+              );
 
-            <div className="game-actions" aria-label="Game actions">
-              <button
-                className="account-button"
-                type="button"
-                onClick={matchmaking ? handleCancel : handlePlay}
-                disabled={
-                  !socketReady ||
-                  cancellingMatchmaking ||
-                  (!matchmaking && Boolean(gameId))
-                }
-              >
-                {cancellingMatchmaking
-                  ? 'Cancelling...'
-                  : matchmaking
-                    ? 'Cancel'
-                    : gameId
-                      ? 'Playing'
-                      : socketReady
-                        ? 'Play'
-                        : 'Connecting...'}
-              </button>
+            case 'out-of-game':
+              return <div>out of game</div>;
 
-              {gameId && (
+            default:
+              return (
                 <>
-                  <button
-                    className="account-button"
-                    type="button"
-                    onClick={handleDraw}
-                    disabled={drawPending && !drawOffer}
-                  >
-                    {drawOffer
-                      ? 'Accept draw'
-                      : drawPending
-                        ? 'Draw offered'
-                        : 'Offer draw'}
-                  </button>
+                  {gameMode !==
+                  GAME_MODE.LOCAL ? (
+                    clockSnapshot?.wtime !=
+                      null &&
+                    clockSnapshot?.btime !=
+                      null && (
+                      <div
+                        className="clock-panel"
+                        aria-label="Time remaining"
+                      >
+                        <div
+                          className={`clock-card ${
+                            clockSnapshot.turn ===
+                            'w'
+                              ? 'active'
+                              : ''
+                          } ${
+                            whiteTime < 30000
+                              ? 'low-time'
+                              : ''
+                          }`}
+                        >
+                          <span className="clock-player">
+                            White
+                          </span>
 
-                  <button
-                    className="account-button danger"
-                    type="button"
-                    onClick={handleResign}
+                          <strong>
+                            {formatClock(
+                              whiteTime,
+                            )}
+                          </strong>
+
+                          <div className="capture-group">
+                            <div className="capture-pieces">
+                              {capturedPieces.b.map(
+                                (
+                                  piece,
+                                  index,
+                                ) => (
+                                  <span
+                                    className="captured-piece"
+                                    key={`${piece}-${index}`}
+                                  >
+                                    <PieceVisual
+                                      color="b"
+                                      type={
+                                        piece
+                                      }
+                                      skinFolder={getSkinFolderForColor(
+                                        'b',
+                                      )}
+                                    />
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          className={`clock-card ${
+                            clockSnapshot.turn ===
+                            'b'
+                              ? 'active'
+                              : ''
+                          } ${
+                            blackTime < 30000
+                              ? 'low-time'
+                              : ''
+                          }`}
+                        >
+                          <span className="clock-player">
+                            Black
+                          </span>
+
+                          <strong>
+                            {formatClock(
+                              blackTime,
+                            )}
+                          </strong>
+
+                          <div className="capture-group">
+                            <div className="capture-pieces">
+                              {capturedPieces.w.map(
+                                (
+                                  piece,
+                                  index,
+                                ) => (
+                                  <span
+                                    className="captured-piece"
+                                    key={`${piece}-${index}`}
+                                  >
+                                    <PieceVisual
+                                      color="w"
+                                      type={
+                                        piece
+                                      }
+                                      skinFolder={getSkinFolderForColor(
+                                        'w',
+                                      )}
+                                    />
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                      <TimeControlPicker
+                        value={selectedTimeControl}
+                        onChange={setSelectedTimeControl}
+                        disabled={matchmaking || Boolean(gameId)}
+                      />
+                  )}
+
+                  <div
+                    className="game-actions"
+                    aria-label="Game actions"
                   >
-                    Resign
-                  </button>
+                    <button
+                      className="account-button"
+                      type="button"
+                      onClick={
+                        matchmaking
+                          ? handleCancel
+                          : handlePlay
+                      }
+                      disabled={
+                        !socketReady ||
+                        cancellingMatchmaking ||
+                        (!matchmaking &&
+                          Boolean(gameId))
+                      }
+                    >
+                      {cancellingMatchmaking
+                        ? 'Cancelling...'
+                        : matchmaking
+                          ? 'Cancel'
+                          : gameId
+                            ? 'Playing'
+                            : socketReady
+                              ? 'Play'
+                              : 'Connecting...'}
+                    </button>
+
+                    {gameId && (
+                      <>
+                        <button
+                          className="account-button"
+                          type="button"
+                          onClick={handleDraw}
+                          disabled={
+                            drawPending &&
+                            !drawOffer
+                          }
+                        >
+                          {drawOffer
+                            ? 'Accept draw'
+                            : drawPending
+                              ? 'Draw offered'
+                              : 'Offer draw'}
+                        </button>
+
+                        <button
+                          className="account-button danger"
+                          type="button"
+                          onClick={
+                            handleResign
+                          }
+                        >
+                          Resign
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  <div
+                    className="chat-panel"
+                    aria-label="Game chat and move history"
+                  >
+                    <div className="chat-header">
+                      <div>
+                        <span className="chat-kicker">
+                          Lichess
+                        </span>
+
+                        <h2>
+                          {rightRailView ===
+                          'history'
+                            ? 'Move history'
+                            : 'Game chat'}
+                        </h2>
+                      </div>
+
+                      <button
+                        className="account-button secondary"
+                        type="button"
+                        onClick={() =>
+                          setRightRailView(
+                            (current) =>
+                              current ===
+                              'history'
+                                ? 'game'
+                                : 'history',
+                          )
+                        }
+                        aria-pressed={
+                          rightRailView ===
+                          'history'
+                        }
+                      >
+                        {rightRailView ===
+                        'history'
+                          ? 'Chat'
+                          : 'History'}
+                      </button>
+                    </div>
+
+                    {rightRailView ===
+                    'history' ? (
+                      <div className="move-history">
+                        {moveHistory.length ===
+                        0 ? (
+                          <p className="chat-empty">
+                            No moves yet.
+                          </p>
+                        ) : (
+                          moveHistory
+                            .reduce(
+                              (
+                                rows,
+                                move,
+                              ) => {
+                                if (
+                                  move.color ===
+                                  'w'
+                                ) {
+                                  rows.push({
+                                    number:
+                                      move.number,
+                                    white:
+                                      move.san,
+                                    black:
+                                      '',
+                                  });
+                                } else if (
+                                  rows.length
+                                ) {
+                                  rows[
+                                    rows.length -
+                                      1
+                                  ].black =
+                                    move.san;
+                                }
+
+                                return rows;
+                              },
+                              [],
+                            )
+                            .map(
+                              (move) => (
+                                <div
+                                  className="history-row"
+                                  key={
+                                    move.number
+                                  }
+                                >
+                                  <span>
+                                    {
+                                      move.number
+                                    }
+                                    .{' '}
+                                  </span>
+                                  <span>
+                                    {
+                                      move.white
+                                    }
+                                  </span>
+                                  <span>
+                                    {' '}
+                                    |{' '}
+                                    {
+                                      move.black
+                                    }
+                                  </span>
+                                </div>
+                              ),
+                            )
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          className="chat-messages"
+                          ref={
+                            chatMessagesRef
+                          }
+                          aria-live="polite"
+                        >
+                          {!gameId && (
+                            <p className="chat-empty">
+                              Join a game to
+                              chat.
+                            </p>
+                          )}
+
+                          {gameId &&
+                            chatMessages.length ===
+                              0 && (
+                              <p className="chat-empty">
+                                No messages yet.
+                              </p>
+                            )}
+
+                          {chatMessages.map(
+                            (
+                              message,
+                              index,
+                            ) => (
+                              <div
+                                className="chat-message"
+                                key={`${message.username}-${message.text}-${index}`}
+                              >
+                                <strong>
+                                  {
+                                    message.username
+                                  }
+                                </strong>
+
+                                <span>
+                                  {
+                                    message.text
+                                  }
+                                </span>
+                              </div>
+                            ),
+                          )}
+                        </div>
+
+                        <form
+                          className="chat-form"
+                          onSubmit={
+                            handleChatSubmit
+                          }
+                        >
+                          <label
+                            className="sr-only"
+                            htmlFor="chat-message"
+                          >
+                            Chat message
+                          </label>
+
+                          <input
+                            id="chat-message"
+                            type="text"
+                            value={chatText}
+                            maxLength={140}
+                            placeholder={
+                              gameId
+                                ? 'Write a message'
+                                : 'Join a game first'
+                            }
+                            disabled={
+                              !gameId ||
+                              !socketReady
+                            }
+                            onChange={(
+                              event,
+                            ) => {
+                              setChatText(
+                                event.target
+                                  .value,
+                              );
+
+                              if (chatError) {
+                                setChatError(
+                                  '',
+                                );
+                              }
+                            }}
+                          />
+
+                          <button
+                            className="chat-send"
+                            type="submit"
+                            disabled={
+                              !gameId ||
+                              !socketReady ||
+                              !chatText.trim()
+                            }
+                            aria-label="Send chat message"
+                          >
+                            Send
+                          </button>
+                        </form>
+
+                        <div className="chat-footer">
+                          <span>
+                            {chatText.length}
+                            /140
+                          </span>
+
+                          {chatError && (
+                            <span
+                              className="chat-error"
+                              role="alert"
+                            >
+                              {chatError}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </>
-              )}
-            </div>
-
-           <div className="chat-panel" aria-label="Game chat and move history">
-  <div className="chat-header">
-    
-    <div>
-      <span className="chat-kicker">Lichess</span>
-      <h2>
-        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
-      </h2>
-    </div>
-
-     <button
-      className="account-button secondary"
-      type="button"
-      onClick={() =>
-        setRightRailView((current) =>
-          current === 'history' ? 'game' : 'history'
-        )
-      }
-      aria-pressed={rightRailView === 'history'}
-    >
-      {rightRailView === 'history' ? 'Chat' : 'History'}
-    </button>
-  </div>
-
-  {rightRailView === 'history' ? (
-    <div className="move-history">
-      {moveHistory.length === 0 ? (
-        <p className="chat-empty">
-          No moves yet.
-        </p>
-      ) : (
-        moveHistory
-          .reduce((rows, move) => {
-            if (move.color === 'w') {
-              rows.push({
-                number: move.number,
-                white: move.san,
-                black: '',
-              });
-            } else if (rows.length) {
-              rows[rows.length - 1].black = move.san;
-            }
-
-            return rows;
-          }, [])
-          .map((move) => (
-            <div className="history-row" key={move.number}>
-              <span>{move.number}. </span>
-              <span>{move.white}</span>
-              <span> | {move.black}</span>
-            </div>
-          ))
-      )}
-    </div>
-  ) : (
-    <>
-      <div
-        className="chat-messages"
-        ref={chatMessagesRef}
-        aria-live="polite"
-      >
-        {!gameId && (
-          <p className="chat-empty">
-            Join a game to chat.
-          </p>
-        )}
-
-        {gameId && chatMessages.length === 0 && (
-          <p className="chat-empty">
-            No messages yet.
-          </p>
-        )}
-
-        {chatMessages.map((message, index) => (
-          <div
-            className="chat-message"
-            key={`${message.username}-${message.text}-${index}`}
-          >
-            <strong>{message.username}</strong>
-            <span>{message.text}</span>
-          </div>
-        ))}
-      </div>
-
-      <form
-        className="chat-form"
-        onSubmit={handleChatSubmit}
-      >
-        <label
-          className="sr-only"
-          htmlFor="chat-message"
-        >
-          Chat message
-        </label>
-
-        <input
-          id="chat-message"
-          type="text"
-          value={chatText}
-          maxLength={140}
-          placeholder={
-            gameId
-              ? 'Write a message'
-              : 'Join a game first'
+              );
           }
-          disabled={!gameId || !socketReady}
-          onChange={(event) => {
-            setChatText(event.target.value);
-            if (chatError) setChatError('');
-          }}
-        />
-
-        <button
-          className="chat-send"
-          type="submit"
-          disabled={
-            !gameId ||
-            !socketReady ||
-            !chatText.trim()
-          }
-          aria-label="Send chat message"
-        >
-          Send
-        </button>
-      </form>
-
-      <div className="chat-footer">
-        <span>{chatText.length}/140</span>
-
-        {chatError && (
-          <span
-            className="chat-error"
-            role="alert"
-          >
-            {chatError}
-          </span>
-        )}
-      </div>
-    </>
-  )}
-</div>
-
-        </>
-      );
-    }
-  })()}
-</aside>
-
+        })()}
+      </aside>
     </main>
   );
 }

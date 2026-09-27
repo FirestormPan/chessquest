@@ -1,8 +1,14 @@
 const lichessUrl = 'https://lichess.org';
 const activeSeeks = new Map();
 const cancelledSeeks = new Set();
-const seekTimeMinutes = '10';
-const seekIncrementSeconds = '5';
+// Later should be Shared with the frontend via a config module
+const ALLOWED_TIME_CONTROLS = {
+  ultraBullet: [{ time: 15, inc: 0 }, { time: 30, inc: 0 }],
+  bullet:      [{ time: 60, inc: 0 }, { time: 120, inc: 1 }],
+  blitz:       [{ time: 180, inc: 0 }, { time: 180, inc: 2 }, { time: 300, inc: 0 }, { time: 300, inc: 3 }],
+  rapid:       [{ time: 600, inc: 0 }, { time: 600, inc: 5 }, { time: 900, inc: 10 }, { time: 1800, inc: 0 }],
+  classical:   [{ time: 1800, inc: 20 }, { time: 3600, inc: 30 }],
+};
 
 function authorizationHeaders(accessToken) {
   return { Authorization: `Bearer ${accessToken}` };
@@ -58,8 +64,28 @@ function parseNdjsonLine(line, onMessage) {
   }
 }
 
+function isAllowedTimeControl(time, increment) {
+  return Object.values(ALLOWED_TIME_CONTROLS)
+    .flat()
+    .some((tc) => tc.time === time && tc.inc === increment);
+}
+
 export function attachGameRoutes(app, getAccessToken) {
   app.post('/api/game/start', async (request, response) => {
+
+    const { time, increment, rated = false } = request.body ?? {};
+    if (!isAllowedTimeControl(time, increment)) {
+      response.status(400).json({ error: 'Invalid time control' });
+      return;
+    }
+    if (rated) {
+      // See "rated restriction" section below
+      if (time < 600) {
+        response.status(400).json({ error: 'Rated board API games must be Rapid or slower' });
+        return;
+      }
+    }
+
     const accessToken = getAccessToken(request);
     if (!accessToken) {
       response.status(401).json({ error: 'Lichess login required' });
@@ -77,6 +103,8 @@ export function attachGameRoutes(app, getAccessToken) {
       controller: new AbortController(),
       id: null,
       idPromise: null,
+      params: { time, increment, rated },
+      startedAt: Date.now(),  
     };
     let resolveSeekId;
     seek.idPromise = new Promise((resolve) => {
@@ -93,10 +121,10 @@ export function attachGameRoutes(app, getAccessToken) {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
-          rated: 'false',
+          rated: rated ? 'true' : 'false',
           variant: 'standard',
-          time: seekTimeMinutes,
-          increment: seekIncrementSeconds,
+          time: String(time/60),
+          increment: String(increment),
         }),
         signal: seek.controller.signal,
       });
