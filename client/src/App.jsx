@@ -440,9 +440,17 @@ function App() {
   const chatMessagesRef = useRef(null);
 
   const [moveHistory, setMoveHistory] = useState([]);
+  const [uciHistory, setUciHistory] = useState([]);
 
   const [premoveQueue, setPremoveQueue] = useState([]);
   const [premovesEnabled, setPremovesEnabled] = useState(true);
+
+  const [reviewPly, setReviewPly] = useState(null);
+  const totalPlies = uciHistory.length;
+  // reviewPly === null means "live" (== totalPlies)
+  const effectivePly = reviewPly ?? totalPlies;
+  const canStepBackward = effectivePly > 0;
+  const canStepForward = effectivePly < totalPlies;
 
   const premoveSquares = useMemo(() => {
     const squares = new Set();
@@ -458,6 +466,7 @@ function App() {
 
   // for premove simulation
   const realGame = useMemo(() => new Chess(fen), [fen]);
+
   const displayFen = useMemo(() => {
     if (!premoveQueue.length || !playerColor) return fen;
 
@@ -470,12 +479,43 @@ function App() {
     return simulated ?? fen;
   }, [fen, premoveQueue, playerColor]);
 
-  const game = useMemo(() => new Chess(displayFen), [displayFen]);
+  const reviewFen = useMemo(() => {
+    if (reviewPly == null) return null;
+    if (!initialFenRef.current) return null;
+
+    try {
+      return applyMoves(
+        initialFenRef.current,
+        uciHistory.slice(0, reviewPly),
+      );
+    } catch {
+      return null;
+    }
+  }, [reviewPly, uciHistory]);
+
+  const boardFen = reviewFen ?? displayFen;
+
+  const game = useMemo(() => new Chess(boardFen), [boardFen]);
 
   const isLichessGame =
     gameMode === GAME_MODE.LICHESS;
 
-  const checkedSquare = getCheckedKingSquare(fen);
+  const checkedSquare = getCheckedKingSquare(boardFen);
+
+  const isReviewing = reviewPly != null;
+
+  const boardLastMove = useMemo(() => {
+    if (reviewPly == null) return lastMove;
+
+    const move = uciHistory[reviewPly - 1];
+    if (!move) return null;
+
+    return { from: move.slice(0, 2), to: move.slice(2, 4) };
+  }, [reviewPly, uciHistory, lastMove]);
+
+
+  const [rematchAvailable, setRematchAvailable] = useState(false);
+  const [rematchChallenge, setRematchChallenge] = useState(null);
 
   const boardFiles = useMemo(
     () => (playerColor === 'b' ? [...files].reverse() : files),
@@ -510,6 +550,22 @@ function App() {
     return color === skinColor
       ? selectedSkinFolder
       : selectedOpponentSkinFolder;
+  }
+
+  function stepBackward() {
+    if (!canStepBackward) return;
+    const next = effectivePly - 1;
+    setReviewPly(next === totalPlies ? null : next);
+    clearSelection();
+    closePromotionChoice();
+  }
+
+  function stepForward() {
+    if (!canStepForward) return;
+    const next = effectivePly + 1;
+    setReviewPly(next === totalPlies ? null : next);
+    clearSelection();
+    closePromotionChoice();
   }
 
   function selectSkinFolder(folder) {
@@ -853,9 +909,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
   useEffect(() => {
     if (selectedTimeControl.rated && !isRatedAllowed(selectedTimeControl.time)) {
-      setSelectedTimeControl((current) => ({ ...current, rated: false }));
+      setSelectedTimeControl((current) =>  current.rated ? { ...current, rated: false } : current )
     }
-  }, [selectedTimeControl]);
+  }, [selectedTimeControl.rated, selectedTimeControl.time]);
 
   useEffect(() => {
     fetch('/api/auth/me', {
@@ -924,6 +980,68 @@ function reconcilePremoves(nextFen, newMoves) {
   }, [chatMessages]);
 
   useEffect(() => {
+    function handleKeyDown(event) {
+      // Ignore when the user is typing (chat input, etc.)
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Ignore when a modifier is held (Ctrl+Arrow etc.)
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+
+      switch (event.key) {
+        case 'ArrowLeft':
+          if (!canStepBackward) return;
+          event.preventDefault();
+          stepBackward();
+          break;
+
+        case 'ArrowRight':
+          if (!canStepForward) return;
+          event.preventDefault();
+          stepForward();
+          break;
+
+        case 'ArrowDown':
+          if (totalPlies === 0) return;
+          event.preventDefault();
+          setReviewPly(0);
+          clearSelection();
+          closePromotionChoice();
+          break;
+
+        case 'ArrowUp':
+          if (totalPlies === 0) return;
+          event.preventDefault();
+          setReviewPly(null);
+          clearSelection();
+          closePromotionChoice();
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    canStepBackward,
+    canStepForward,
+    totalPlies,
+    stepBackward,
+    stepForward,
+  ]);
+
+  useEffect(() => {
     if (
       !promotionChoice ||
       !boardFrameRef.current
@@ -955,7 +1073,7 @@ function reconcilePremoves(nextFen, newMoves) {
     return undefined;
   }, [
     promotionChoice,
-    fen,
+    boardFen,
     boardFiles,
     boardRanks,
   ]);
@@ -1187,6 +1305,8 @@ function reconcilePremoves(nextFen, newMoves) {
 
         fenRef.current = nextFen;
         setFen(nextFen);
+        setReviewPly(null); 
+        setUciHistory(moves);
 
         setCapturedPieces(
           getCapturedPieces(
@@ -1231,18 +1351,15 @@ function reconcilePremoves(nextFen, newMoves) {
           event.moves,
         );
 
-        const lastUciMove =
-          moves[moves.length - 1];
+        const lastUciMove = moves[moves.length - 1];
 
         const newMoves = moves.slice(
           moveCountRef.current,
         );
 
-        const moveWasMade =
-          newMoves.length > 0;
+        const moveWasMade = newMoves.length > 0;
 
-        moveCountRef.current =
-          moves.length;
+        moveCountRef.current = moves.length;
 
         const ownDrawOffer =
           playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
@@ -1279,6 +1396,8 @@ function reconcilePremoves(nextFen, newMoves) {
             event.moves,
           ),
         );
+
+        setUciHistory(moves);
 
         setLastMove(
           lastUciMove
@@ -1319,7 +1438,7 @@ function reconcilePremoves(nextFen, newMoves) {
          */
         fenRef.current = nextFen;
         setFen(nextFen);
-
+        setReviewPly(null);
         /*
          * This is the important premove reconciliation
          * point. Every authoritative gameState is checked.
@@ -1371,8 +1490,10 @@ function reconcilePremoves(nextFen, newMoves) {
           gameIdRef.current = null;
           setGameId(null);
 
-          initialFenRef.current = null;
+
           moveCountRef.current = 0;
+          setReviewPly(null);
+
 
           setGameMode(GAME_MODE.LOCAL);
 
@@ -1484,7 +1605,9 @@ function reconcilePremoves(nextFen, newMoves) {
     setChatText('');
     setChatError('');
 
+    setUciHistory([]);
     setMoveHistory([]);
+    setReviewPly(null);
 
     clearSelection();
     closePromotionChoice();
@@ -1561,6 +1684,7 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handleSquareClick(square) {
+    if (isReviewing) return;
     if (promotionChoice) {
       closePromotionChoice();
       return;
@@ -1638,6 +1762,8 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePieceClick(event, square) {
+    if (isReviewing) return;
+
     event.stopPropagation();
 
     if (suppressPieceClickRef.current) {
@@ -1897,6 +2023,7 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePointerDown(event, square) {
+    if (isReviewing) return;
     if (event.button !== 0) {
       return;
     }
@@ -1960,6 +2087,8 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePointerMove(event) {
+    if (isReviewing) return;
+
     if (
       !pointerDrag ||
       pointerDrag.pointerId !==
@@ -1991,82 +2120,84 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePointerUp(event) {
-  if (
-    !pointerDrag ||
-    pointerDrag.pointerId !== event.pointerId
-  ) {
-    return;
-  }
-
-  if (!pointerDrag.moved) {
-    shouldCancelPremovesOnClick(pointerDrag.square);
-  }
-
-  try {
+    if (isReviewing) return;
+      
     if (
-      event.currentTarget.hasPointerCapture(
-        event.pointerId,
-      )
+      !pointerDrag ||
+      pointerDrag.pointerId !== event.pointerId
     ) {
-      event.currentTarget.releasePointerCapture(
-        event.pointerId,
-      );
+      return;
     }
-  } catch {
-    // Pointer capture may already have been released.
-  }
 
-  if (pointerDrag.moved) {
-    const color = isLichessGame
-      ? playerColorRef.current
-      : realGame.turn();
+    if (!pointerDrag.moved) {
+      shouldCancelPremovesOnClick(pointerDrag.square);
+    }
 
-    const isOurTurn = realGame.turn() === color;
-
-    const availableMoves = isOurTurn
-      ? getLegalMovesForPiece(
-          fenRef.current,
-          pointerDrag.square,
+    try {
+      if (
+        event.currentTarget.hasPointerCapture(
+          event.pointerId,
         )
-      : isLichessGame
-        ? getAvailablePremoveMoves(
-            pointerDrag.square,
-          )
-        : [];
-
-    const canMove = availableMoves.some(
-      (move) =>
-        move.to === pointerDrag.destination,
-    );
-
-    if (canMove) {
-      if (isOurTurn) {
-        if (premoveQueueRef.current.length) {
-          clearPremoves();
-        }
-
-        makeMove(
-          pointerDrag.square,
-          pointerDrag.destination,
-          '',
-          false,
-        );
-      } else if (isLichessGame && premovesEnabled) {
-        queueOrPromptPremove(
-          pointerDrag.square,
-          pointerDrag.destination,
+      ) {
+        event.currentTarget.releasePointerCapture(
+          event.pointerId,
         );
       }
+    } catch {
+      // Pointer capture may already have been released.
     }
+
+    if (pointerDrag.moved) {
+      const color = isLichessGame
+        ? playerColorRef.current
+        : realGame.turn();
+
+      const isOurTurn = realGame.turn() === color;
+
+      const availableMoves = isOurTurn
+        ? getLegalMovesForPiece(
+            fenRef.current,
+            pointerDrag.square,
+          )
+        : isLichessGame
+          ? getAvailablePremoveMoves(
+              pointerDrag.square,
+            )
+          : [];
+
+      const canMove = availableMoves.some(
+        (move) =>
+          move.to === pointerDrag.destination,
+      );
+
+      if (canMove) {
+        if (isOurTurn) {
+          if (premoveQueueRef.current.length) {
+            clearPremoves();
+          }
+
+          makeMove(
+            pointerDrag.square,
+            pointerDrag.destination,
+            '',
+            false,
+          );
+        } else if (isLichessGame && premovesEnabled) {
+          queueOrPromptPremove(
+            pointerDrag.square,
+            pointerDrag.destination,
+          );
+        }
+      }
+    }
+
+    setPointerDrag(null);
+    setDraggingSquare(null);
+
+    window.setTimeout(() => {
+      suppressPieceClickRef.current = false;
+    }, 0);
   }
-
-  setPointerDrag(null);
-  setDraggingSquare(null);
-
-  window.setTimeout(() => {
-    suppressPieceClickRef.current = false;
-  }, 0);
-}
 
   function cancelLastPremove() {
     /*
@@ -2095,6 +2226,8 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePointerCancel(event) {
+    if (isReviewing) return;
+
     if (
       pointerDrag?.pointerId ===
       event.pointerId
@@ -2230,7 +2363,7 @@ function reconcilePremoves(nextFen, newMoves) {
               setRightRailView('game')
             }
           >
-            Show game and chat
+            Game and chat
           </button>
 
           <button
@@ -2359,7 +2492,7 @@ function reconcilePremoves(nextFen, newMoves) {
                   selectedSquare={
                     selectedSquare
                   }
-                  lastMove={lastMove}
+                  lastMove={boardLastMove}
                   legalMoves={legalMoves}
                   draggingSquare={
                     draggingSquare
@@ -2730,114 +2863,135 @@ function reconcilePremoves(nextFen, newMoves) {
                     className="chat-panel"
                     aria-label="Game chat and move history"
                   >
-                    <div className="chat-header">
-                      <div>
-                        <span className="chat-kicker">
-                          Lichess
-                        </span>
+                    
+                   <div className="chat-header">
+                    <div>
+                      <span className="chat-kicker">Lichess</span>
+                      <h2>
+                        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
+                      </h2>
+                    </div>
 
-                        <h2>
-                          {rightRailView ===
-                          'history'
-                            ? 'Move history'
-                            : 'Game chat'}
-                        </h2>
-                      </div>
+                    <div className="chat-header-actions">
+                      {rightRailView === 'history' && uciHistory.length > 0 && (
+                        <>
+                          <button
+                            className="history-step-button"
+                            type="button"
+                            onClick={stepBackward}
+                            disabled={!canStepBackward}
+                            aria-label="Previous move"
+                            title="Previous move"
+                          >
+                            ‹
+                          </button>
+
+                          <button
+                            className="history-step-button"
+                            type="button"
+                            onClick={stepForward}
+                            disabled={!canStepForward}
+                            aria-label="Next move"
+                            title="Next move"
+                          >
+                            ›
+                          </button>
+
+                          <button
+                            className={`account-button secondary history-live-button ${
+                              isReviewing ? 'is-reviewing' : ''
+                            }`}
+                            type="button"
+                            onClick={() => setReviewPly(null)}
+                            disabled={!isReviewing}
+                          >
+                            {isReviewing ? '⟲ Live' : '● Live'}
+                          </button>
+                        </>
+                      )}
 
                       <button
                         className="account-button secondary"
                         type="button"
                         onClick={() =>
-                          setRightRailView(
-                            (current) =>
-                              current ===
-                              'history'
-                                ? 'game'
-                                : 'history',
+                          setRightRailView((current) =>
+                            current === 'history' ? 'game' : 'history',
                           )
                         }
-                        aria-pressed={
-                          rightRailView ===
-                          'history'
-                        }
+                        aria-pressed={rightRailView === 'history'}
                       >
-                        {rightRailView ===
-                        'history'
-                          ? 'Chat'
-                          : 'History'}
+                        {rightRailView === 'history' ? 'Chat' : 'History'}
                       </button>
                     </div>
+                  </div>
+                    
 
-                    {rightRailView ===
-                    'history' ? (
+                    {rightRailView === 'history' ? (
                       <div className="move-history">
-                        {moveHistory.length ===
-                        0 ? (
-                          <p className="chat-empty">
-                            No moves yet.
-                          </p>
+                        {moveHistory.length === 0 ? (
+                          <p className="chat-empty">No moves yet.</p>
                         ) : (
                           moveHistory
-                            .reduce(
-                              (
-                                rows,
-                                move,
-                              ) => {
-                                if (
-                                  move.color ===
-                                  'w'
-                                ) {
-                                  rows.push({
-                                    number:
-                                      move.number,
-                                    white:
-                                      move.san,
-                                    black:
-                                      '',
-                                  });
-                                } else if (
-                                  rows.length
-                                ) {
-                                  rows[
-                                    rows.length -
-                                      1
-                                  ].black =
-                                    move.san;
-                                }
+                            .reduce((rows, move, index) => {
+                              if (move.color === 'w') {
+                                rows.push({
+                                  number: move.number,
+                                  white: move.san,
+                                  whitePly: index + 1,
+                                  black: '',
+                                  blackPly: null,
+                                });
+                              } else if (rows.length) {
+                                const last = rows[rows.length - 1];
+                                last.black = move.san;
+                                last.blackPly = index + 1;
+                              }
+                              return rows;
+                            }, [])
+                            .map((row) => {
+                              const isWhiteCurrent = reviewPly === row.whitePly;
+                              const isBlackCurrent =
+                                row.blackPly != null && reviewPly === row.blackPly;
 
-                                return rows;
-                              },
-                              [],
-                            )
-                            .map(
-                              (move) => (
-                                <div
-                                  className="history-row"
-                                  key={
-                                    move.number
-                                  }
-                                >
-                                  <span>
-                                    {
-                                      move.number
+                              return (
+                                <div className="history-row" key={row.number}>
+                                  <span>{row.number}. </span>
+                                  <button
+                                    type="button"
+                                    className={`history-move ${
+                                      isWhiteCurrent ? 'current' : ''
+                                    }`}
+                                    onClick={() =>
+                                      setReviewPly(
+                                        reviewPly === row.whitePly ? null : row.whitePly,
+                                      )
                                     }
-                                    .{' '}
-                                  </span>
-                                  <span>
-                                    {
-                                      move.white
-                                    }
-                                  </span>
-                                  <span>
-                                    {' '}
-                                    |{' '}
-                                    {
-                                      move.black
-                                    }
-                                  </span>
+                                  >
+                                    {row.white}
+                                  </button>
+                                  {row.blackPly != null && (
+                                    <>
+                                      <span> | </span>
+                                      <button
+                                        type="button"
+                                        className={`history-move ${
+                                          isBlackCurrent ? 'current' : ''
+                                        }`}
+                                        onClick={() =>
+                                          setReviewPly(
+                                            reviewPly === row.blackPly
+                                              ? null
+                                              : row.blackPly,
+                                          )
+                                        }
+                                      >
+                                        {row.black}
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
-                              ),
-                            )
+                              );
+                            })
                         )}
                       </div>
                     ) : (

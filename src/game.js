@@ -252,3 +252,30 @@ export async function sendLichessChat(accessToken, gameId, room, text) {
     body: new URLSearchParams({ room, text }),
   });
 }
+
+export async function createRematchChallenge(accessToken, opponentUsername, gameId, timeControl, rated) {
+  const body = new URLSearchParams({
+    'clock.limit': String(timeControl.time / 60), // Lichess expects minutes here
+    'clock.increment': String(timeControl.increment),
+    'rated': rated ? 'true' : 'false',
+    'color': 'random',
+    'rematchOf': gameId, // The critical field linking back to the old game
+  });
+
+  return fetch(`${lichessUrl}/api/challenge/${opponentUsername}`, {
+    method: 'POST',
+    headers: {
+      ...authorizationHeaders(accessToken),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+}
+
+export async function acceptLichessChallenge(accessToken, challengeId, color = 'random') {
+  const query = color !== 'random' ? `?color=${color}` : '';
+  return fetch(`${lichessUrl}/api/challenge/${challengeId}/accept${query}`, {
+    method: 'POST',
+    headers: authorizationHeaders(accessToken),
+  });
+}

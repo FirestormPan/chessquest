@@ -50,6 +50,19 @@ export function attachWebSocketServer(server, getAccessToken) {
     let receivedMoveCount = 0;
 
     startLichessEventStream(accessToken, (event) => {
+      // Handle incoming challenges
+      if (event.type === 'challenge' && event.challenge) {
+        const challenge = event.challenge;
+        // Only forward if it's a rematch of the current game
+        if (challenge.rematchOf && challenge.rematchOf === gameId) {
+          send(socket, {
+            type: 'game.rematch.offered',
+            challengeId: challenge.id,
+            challengerName: challenge.challenger?.name,
+          });
+        }
+      }
+        
       if (event.type !== 'gameStart' || gameId) return;
       if (isSeekCancelled(accessToken)) return;
 
