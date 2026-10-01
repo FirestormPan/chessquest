@@ -71,6 +71,25 @@ function getSquarePosition(square, boardFiles, boardRanks) {
   };
 }
 
+
+function squareToArrowPoint(square, boardFiles, boardRanks) {
+  const fileIndex = boardFiles.indexOf(square[0]);
+  const rankIndex = boardRanks.indexOf(Number(square[1]));
+  return { x: fileIndex + 0.5, y: rankIndex + 0.5 };
+}
+
+function trimArrowEnd(from, to, trim) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return to;
+  return {
+    x: to.x - (dx / len) * trim,
+    y: to.y - (dy / len) * trim,
+  };
+}
+
+
 function formatClock(milliseconds) {
   const seconds = Math.max(0, milliseconds) / 1000;
   const minutes = Math.floor(seconds / 60);
@@ -171,15 +190,47 @@ function ChessBoard({
   opponentSkinFolder,
   checkedSquare,
   premoveSquares,
+  arrows,
+  arrowDrag,
+  onArrowPointerDown,
+  onArrowPointerMove,
+  onArrowPointerUp,
+  onArrowPointerCancel,
+
 }) {
   const skinColor = playerColor ?? 'w';
 
+  function renderArrow(arrow, key, opacity = 1) {
+    const start = squareToArrowPoint(arrow.from, boardFiles, boardRanks);
+    const end = squareToArrowPoint(arrow.to, boardFiles, boardRanks);
+    const trimmedEnd = trimArrowEnd(start, end, 0.15);
+
+    return (
+      <line
+        key={key}
+        x1={start.x}
+        y1={start.y}
+        x2={trimmedEnd.x}
+        y2={trimmedEnd.y}
+        stroke="rgba(255, 170, 0, 0.9)"
+        strokeWidth="0.14"
+        strokeLinecap="round"
+        markerEnd="url(#arrowhead)"
+        opacity={opacity}
+      />
+    );
+  }
   return (
     <div
       className="board"
       role="grid"
       aria-label="Interactive chessboard"
       onClick={onBoardClick}
+      onContextMenu={(event) => event.preventDefault()}
+      onPointerDown={onArrowPointerDown}
+      onPointerMove={onArrowPointerMove}
+      onPointerUp={onArrowPointerUp}
+      onPointerCancel={onArrowPointerCancel}
     >
       {boardRanks.flatMap((rank, rankIndex) =>
         boardFiles.map((file, fileIndex) => {
@@ -249,6 +300,38 @@ function ChessBoard({
           />
         </div>
       )}
+      <svg
+        className="arrow-layer"
+        viewBox="0 0 8 8"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <defs>
+          <marker
+            id="arrowhead"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="4"
+            markerHeight="4"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path
+              d="M0,0 L10,5 L0,10 z"
+              fill="rgba(255, 170, 0, 0.9)"
+            />
+          </marker>
+        </defs>
+
+        {arrows.map((arrow, index) =>
+          renderArrow(arrow, `${arrow.from}-${arrow.to}-${index}`),
+        )}
+
+        {arrowDrag &&
+          arrowDrag.from !== arrowDrag.to &&
+          renderArrow(arrowDrag, 'drag-preview', 0.6)}
+      </svg>
     </div>
   );
 }
@@ -387,9 +470,13 @@ function App() {
   const [cancellingMatchmaking, setCancellingMatchmaking] =
     useState(false);
   const [gameStatus, setGameStatus] = useState('');
+
+  const [arrows, setArrows] = useState([]);
+  const [arrowDrag, setArrowDrag] = useState(null);
+
   const [selectedTimeControl, setSelectedTimeControl] = useState(() => {
-    const defaultCategory = 'rapid';
-    const firstPreset = TIME_CONTROL_CATEGORIES[defaultCategory].presets[0];
+  const defaultCategory = 'rapid';
+  const firstPreset = TIME_CONTROL_CATEGORIES[defaultCategory].presets[0];
 
     return {
       category: defaultCategory,
@@ -1137,8 +1224,7 @@ function reconcilePremoves(nextFen, newMoves) {
         }
 
         if (
-          payload.message ===
-          'Draw request was rejected'
+          payload.message === 'Draw request was rejected'
         ) {
           drawPendingRef.current = false;
           setDrawPending(false);
@@ -1308,6 +1394,8 @@ function reconcilePremoves(nextFen, newMoves) {
         setReviewPly(null); 
         setUciHistory(moves);
 
+        setArrows([]);
+
         setCapturedPieces(
           getCapturedPieces(
             event.initialFen,
@@ -1409,6 +1497,8 @@ function reconcilePremoves(nextFen, newMoves) {
         );
 
         if (newMoves.length) {
+          setArrows([]);
+          
           const newCapturedPieces =
             getCapturedPieces(
               fenRef.current,
@@ -1490,13 +1580,13 @@ function reconcilePremoves(nextFen, newMoves) {
           gameIdRef.current = null;
           setGameId(null);
 
-
           moveCountRef.current = 0;
           setReviewPly(null);
 
 
           setGameMode(GAME_MODE.LOCAL);
 
+          setArrows([]);
           clearSelection();
           clearPremoves();
         }
@@ -1604,6 +1694,8 @@ function reconcilePremoves(nextFen, newMoves) {
     setChatMessages([]);
     setChatText('');
     setChatError('');
+
+    setArrows([]);
 
     setUciHistory([]);
     setMoveHistory([]);
@@ -1883,6 +1975,8 @@ function reconcilePremoves(nextFen, newMoves) {
 
       fenRef.current = nextFen;
       setFen(nextFen);
+
+      setArrows([]);
 
       if (playedMove.captured) {
         const capturedColor =
@@ -2199,6 +2293,76 @@ function reconcilePremoves(nextFen, newMoves) {
     }, 0);
   }
 
+  function handleArrowPointerDown(event) {
+    if (event.button !== 2) return;
+
+    const square =
+      event.target.closest('[data-square]')?.dataset.square;
+    if (!square) return;
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setArrowDrag({
+      pointerId: event.pointerId,
+      from: square,
+      to: square,
+    });
+  }
+
+  function handleArrowPointerMove(event) {
+    if (!arrowDrag || arrowDrag.pointerId !== event.pointerId) return;
+
+    const square = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest('[data-square]')
+      ?.dataset.square;
+
+    if (square && square !== arrowDrag.to) {
+      setArrowDrag((current) =>
+        current ? { ...current, to: square } : null,
+      );
+    }
+  }
+
+  function handleArrowPointerUp(event) {
+    if (!arrowDrag || arrowDrag.pointerId !== event.pointerId) return;
+
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Pointer capture may already have been released.
+    }
+
+    const { from, to } = arrowDrag;
+    setArrowDrag(null);
+
+    // Right-click without dragging clears all arrows.
+    if (from === to) {
+      setArrows([]);
+      return;
+    }
+
+    // Toggle: re-right-clicking the same arrow removes it.
+    setArrows((current) => {
+      const existing = current.findIndex(
+        (arrow) => arrow.from === from && arrow.to === to,
+      );
+
+      if (existing !== -1) {
+        return current.filter((_, index) => index !== existing);
+      }
+
+      return [...current, { from, to }];
+    });
+  }
+
+  function handleArrowPointerCancel(event) {
+    if (arrowDrag?.pointerId === event.pointerId) {
+      setArrowDrag(null);
+    }
+  }
+
   function cancelLastPremove() {
     /*
      * Never remove the move currently waiting for
@@ -2228,10 +2392,7 @@ function reconcilePremoves(nextFen, newMoves) {
   function handlePointerCancel(event) {
     if (isReviewing) return;
 
-    if (
-      pointerDrag?.pointerId ===
-      event.pointerId
-    ) {
+    if ( pointerDrag?.pointerId === event.pointerId ) {
       setPointerDrag(null);
       setDraggingSquare(null);
       suppressPieceClickRef.current =
@@ -2295,8 +2456,6 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   
-
-
   return (
     <main className="app-shell">
       <section
@@ -2318,8 +2477,7 @@ function reconcilePremoves(nextFen, newMoves) {
                   {account.username}
                 </strong>{' '}
                 (
-                {account.perfs.rapid.rating ||
-                  'unrated'}
+                {account.perfs.rapid.rating || 'unrated'}
                 )
               </span>
 
@@ -2373,12 +2531,9 @@ function reconcilePremoves(nextFen, newMoves) {
               setRightRailView('out-of-game')
             }
             disabled={
-              gameStatus ===
-                'Game in progress' ||
-              gameStatus ===
-                'Searching for an opponent...' ||
-              gameStatus ===
-                'Draw offered'
+              gameStatus === 'Game in progress' ||
+              gameStatus === 'Searching for an opponent...' ||
+              gameStatus === 'Draw offered'
             }
           >
             Out of game
@@ -2489,14 +2644,10 @@ function reconcilePremoves(nextFen, newMoves) {
                   game={game}
                   boardFiles={boardFiles}
                   boardRanks={boardRanks}
-                  selectedSquare={
-                    selectedSquare
-                  }
+                  selectedSquare={selectedSquare}
                   lastMove={boardLastMove}
                   legalMoves={legalMoves}
-                  draggingSquare={
-                    draggingSquare
-                  }
+                  draggingSquare={draggingSquare}
                   onSquareClick={
                     handleSquareClick
                   }
@@ -2520,6 +2671,12 @@ function reconcilePremoves(nextFen, newMoves) {
                       closePromotionChoice();
                     }
                   }}
+                  arrows={arrows}
+                  arrowDrag={arrowDrag}
+                  onArrowPointerDown={handleArrowPointerDown}
+                  onArrowPointerMove={handleArrowPointerMove}
+                  onArrowPointerUp={handleArrowPointerUp}
+                  onArrowPointerCancel={handleArrowPointerCancel}
                   moveAnimation={
                     moveAnimation
                   }
@@ -2590,7 +2747,6 @@ function reconcilePremoves(nextFen, newMoves) {
                           )
                         }
                       />
-
                       Select for opponent
                     </label>
                   </div>
@@ -2600,13 +2756,11 @@ function reconcilePremoves(nextFen, newMoves) {
                       (folder) => (
                         <button
                           className={`skin-option ${
-                            selectedSkinFolder ===
-                            folder
+                            selectedSkinFolder === folder
                               ? 'selected player-selected'
                               : ''
                           } ${
-                            selectedOpponentSkinFolder ===
-                            folder
+                            selectedOpponentSkinFolder === folder
                               ? 'selected opponent-selected'
                               : ''
                           }`}
@@ -2619,17 +2773,13 @@ function reconcilePremoves(nextFen, newMoves) {
                           }
                           disabled={
                             selectingOpponentSkin
-                              ? selectedSkinFolder ===
-                                folder
-                              : selectedOpponentSkinFolder ===
-                                folder
+                              ? selectedSkinFolder === folder
+                              : selectedOpponentSkinFolder === folder
                           }
                           aria-label={
-                            selectedSkinFolder ===
-                            folder
+                            selectedSkinFolder === folder
                               ? `${folder} selected for player`
-                              : selectedOpponentSkinFolder ===
-                                folder
+                              : selectedOpponentSkinFolder === folder
                                 ? `${folder} selected for opponent`
                                 : `Equip ${folder} piece skin`
                           }
@@ -2673,8 +2823,7 @@ function reconcilePremoves(nextFen, newMoves) {
                       >
                         <div
                           className={`clock-card ${
-                            clockSnapshot.turn ===
-                            'w'
+                            clockSnapshot.turn === 'w'
                               ? 'active'
                               : ''
                           } ${
@@ -2722,8 +2871,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
                         <div
                           className={`clock-card ${
-                            clockSnapshot.turn ===
-                            'b'
+                            clockSnapshot.turn === 'b'
                               ? 'active'
                               : ''
                           } ${

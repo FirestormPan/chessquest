@@ -176,17 +176,60 @@ function getPremoveMovesForPiece(fen, square, color) {
       }
 
       try {
-        const candidate = simulated
-          .moves({ square, verbose: true })
-          .find((m) => m.to === destSquare);
+        let candidate = simulated
+          .moves({
+            square,
+            verbose: true,
+          })
+          .find(
+            (move) => move.to === destSquare,
+          );
+
+        // Special case for kings: a king can't legally move to an
+        // attacked square, so the normal check fails when the
+        // destination is defended by an enemy piece that is itself
+        // expected to move there (e.g. Qxe2 followed by Kxe2).
+        // Try removing each enemy attacker of the destination and
+        // see if the king move becomes legal.
+        if (!candidate && movingPiece.type === 'k') {
+          const attackers = findSquareAttackers(
+            simulated,
+            destSquare,
+            enemyColor,
+          );
+
+          for (const attackerSq of attackers) {
+            const sim2 = new Chess(simulated.fen());
+            sim2.remove(attackerSq);
+
+            try {
+              const alt = sim2
+                .moves({
+                  square,
+                  verbose: true,
+                })
+                .find(
+                  (move) => move.to === destSquare,
+                );
+
+              if (alt) {
+                candidate = alt;
+                break;
+              }
+            } catch {
+              // Ignore speculative illegal moves.
+            }
+          }
+        }
 
         if (candidate) {
           results.push(candidate);
           seen.add(key);
         }
       } catch {
-        // ignore
+        // Ignore speculative illegal moves.
       }
+
     }
   }
 
@@ -240,83 +283,147 @@ function getPremoveMovesForPiece(fen, square, color) {
   return results;
 }
 
-  function applyPremove(fen, move, color, allowOwnDestination = false) {
-    try {
-      const position = new Chess(setFenTurn(fen, color));
+function findSquareAttackers(position, square, attackerColor) {
+  const attackers = [];
+  const files = 'abcdefgh';
+  const sqFile = files.indexOf(square[0]);
+  const sqRank = Number(square[1]);
 
-      const piece = position.get(move.from);
-      if (!piece || piece.color !== color) return null;
+  const slideDirs = [
+    { dx: 1, dy: 0, pieces: ['q', 'r'] },
+    { dx: -1, dy: 0, pieces: ['q', 'r'] },
+    { dx: 0, dy: 1, pieces: ['q', 'r'] },
+    { dx: 0, dy: -1, pieces: ['q', 'r'] },
+    { dx: 1, dy: 1, pieces: ['q', 'b'] },
+    { dx: 1, dy: -1, pieces: ['q', 'b'] },
+    { dx: -1, dy: 1, pieces: ['q', 'b'] },
+    { dx: -1, dy: -1, pieces: ['q', 'b'] },
+  ];
 
-      const destinationPiece = position.get(move.to);
-      const enemyColor = color === 'w' ? 'b' : 'w';
-
-      if (destinationPiece && destinationPiece.color === color) {
-        if (!allowOwnDestination) return null;
-
-        // Pawn diagonal recapture: chess.js requires an enemy piece
-        // on the destination to generate the diagonal capture.
-        const isPawn = piece.type === 'p';
-        const fileDiff = Math.abs(
-          'abcdefgh'.indexOf(move.to[0]) -
-          'abcdefgh'.indexOf(move.from[0]),
-        );
-
-        position.remove(move.to);
-
-        if (isPawn && fileDiff === 1) {
-          position.put(
-            { type: 'p', color: enemyColor },
-            move.to,
-          );
+  for (const { dx, dy, pieces } of slideDirs) {
+    let f = sqFile + dx;
+    let r = sqRank + dy;
+    while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
+      const sq = `${files[f]}${r}`;
+      const p = position.get(sq);
+      if (p) {
+        if (p.color === attackerColor && pieces.includes(p.type)) {
+          attackers.push(sq);
         }
+        break;
       }
-
-      const promotion =
-        move.promotion && 'qrbn'.includes(move.promotion)
-          ? move.promotion
-          : undefined;
-
-      position.move({
-        from: move.from,
-        to: move.to,
-        promotion,
-      });
-
-      let nextFen = position.fen();
-      nextFen = clearFenEnPassant(nextFen);
-      nextFen = setFenTurn(nextFen, color);
-      return nextFen;
-    } catch {
-      return null;
+      f += dx;
+      r += dy;
     }
   }
 
-  function validatePremoveSequence(fen, moves, color, allowOwnDestination = true) {
-    let simulatedFen = fen;
+  const knightOffsets = [
+    [1, 2], [2, 1], [-1, 2], [-2, 1],
+    [1, -2], [2, -1], [-1, -2], [-2, -1],
+  ];
+  for (const [dx, dy] of knightOffsets) {
+    const f = sqFile + dx;
+    const r = sqRank + dy;
+    if (f < 0 || f >= 8 || r < 1 || r > 8) continue;
+    const sq = `${files[f]}${r}`;
+    const p = position.get(sq);
+    if (p && p.color === attackerColor && p.type === 'n') {
+      attackers.push(sq);
+    }
+  }
 
-    for (const move of moves) {
-      const simulated = applyPremove(
-        simulatedFen,
-        move,
-        color,
-        allowOwnDestination,
+  const pawnRankOffset = attackerColor === 'w' ? -1 : 1;
+  for (const df of [-1, 1]) {
+    const f = sqFile + df;
+    const r = sqRank + pawnRankOffset;
+    if (f < 0 || f >= 8 || r < 1 || r > 8) continue;
+    const sq = `${files[f]}${r}`;
+    const p = position.get(sq);
+    if (p && p.color === attackerColor && p.type === 'p') {
+      attackers.push(sq);
+    }
+  }
+
+  return attackers;
+}
+
+function applyPremove(fen, move, color, allowOwnDestination = false) {
+  try {
+    const position = new Chess(setFenTurn(fen, color));
+
+    const piece = position.get(move.from);
+    if (!piece || piece.color !== color) return null;
+
+    const destinationPiece = position.get(move.to);
+    const enemyColor = color === 'w' ? 'b' : 'w';
+
+    if (destinationPiece && destinationPiece.color === color) {
+      if (!allowOwnDestination) return null;
+
+      // Pawn diagonal recapture: chess.js requires an enemy piece
+      // on the destination to generate the diagonal capture.
+      const isPawn = piece.type === 'p';
+      const fileDiff = Math.abs(
+        'abcdefgh'.indexOf(move.to[0]) -
+        'abcdefgh'.indexOf(move.from[0]),
       );
 
-      if (!simulated) return false;
-      simulatedFen = simulated;
+      position.remove(move.to);
+
+      if (isPawn && fileDiff === 1) {
+        position.put(
+          { type: 'p', color: enemyColor },
+          move.to,
+        );
+      }
     }
 
-    return true;
+    const promotion =
+      move.promotion && 'qrbn'.includes(move.promotion)
+        ? move.promotion
+        : undefined;
+
+    position.move({
+      from: move.from,
+      to: move.to,
+      promotion,
+    });
+
+    let nextFen = position.fen();
+    nextFen = clearFenEnPassant(nextFen);
+    nextFen = setFenTurn(nextFen, color);
+    return nextFen;
+  } catch {
+    return null;
+  }
+}
+
+function validatePremoveSequence(fen, moves, color, allowOwnDestination = true) {
+  let simulatedFen = fen;
+
+  for (const move of moves) {
+    const simulated = applyPremove(
+      simulatedFen,
+      move,
+      color,
+      allowOwnDestination,
+    );
+
+    if (!simulated) return false;
+    simulatedFen = simulated;
   }
 
+  return true;
+}
 
-  function clearFenEnPassant(fen) {
-    const fields = fen.split(' ');
-    fields[3] = '-';
-    return fields.join(' ');
-  }
 
-  function getPremovePosition(fen, moves, color) {
+function clearFenEnPassant(fen) {
+  const fields = fen.split(' ');
+  fields[3] = '-';
+  return fields.join(' ');
+}
+
+function getPremovePosition(fen, moves, color) {
   let simulatedFen = fen;
 
   for (const move of moves) {
