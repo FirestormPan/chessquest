@@ -1045,7 +1045,6 @@ h1 {
 }
 
 /* ---------- Move history ---------- */
-
 .move-history {
   color: var(--parchment);
   display: flex;

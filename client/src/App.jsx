@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Chess } from 'chess.js';
 import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition,}   from './boardRules';
-import { GAME_MODE, canPlayerMove } from './gameMode';
+import { GAME_MODE, GAME_PHASE, getCapabilities, canPlayerMove } from './gameMode';
 import {  TIME_CONTROL_CATEGORIES,   MATCHMAKING_CATEGORIES, isRatedAllowed,  formatTimeControl,} from './timeControls';
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -439,6 +439,8 @@ function App() {
   const initialFenRef = useRef(null);
   const fenRef = useRef(new Chess().fen());
 
+  const uciHistoryRef = useRef([]);
+
   const playerColorRef = useRef(null);
   const gameIdRef = useRef(null);
 
@@ -584,8 +586,14 @@ function App() {
 
   const game = useMemo(() => new Chess(boardFen), [boardFen]);
 
-  const isLichessGame =
-    gameMode === GAME_MODE.LICHESS;
+
+  const capabilities = useMemo(() => getCapabilities(gameMode), [gameMode]);
+
+  const phase = useMemo(() => {
+    if (matchmaking) return GAME_PHASE.SEARCHING;
+    if (gameId)      return GAME_PHASE.PLAYING;
+    return GAME_PHASE.IDLE;
+  }, [matchmaking, gameId]);
 
   const checkedSquare = getCheckedKingSquare(boardFen);
 
@@ -722,7 +730,46 @@ function App() {
     setPromotionChoice(null);
   }
 
-  
+    function commitPosition(nextFen, {
+    uciMoves,
+    animate = null,
+    clearArrows = false,
+  }) {
+    /*
+     * Update the ref before scheduling any state, so a second
+     * commitPosition call in the same tick reads this one's list.
+     */
+    uciHistoryRef.current = uciMoves;
+
+    if (animate) {
+      animateMove(animate.from, animate.to, animate.piece);
+    }
+
+    if (clearArrows) {
+      setArrows([]);
+    }
+
+    const baseFen = initialFenRef.current;
+
+    const lastUciMove = uciMoves[uciMoves.length - 1];
+
+    setLastMove(
+      lastUciMove
+        ? {
+            from: lastUciMove.slice(0, 2),
+            to: lastUciMove.slice(2, 4),
+          }
+        : null,
+    );
+
+    setUciHistory(uciMoves);
+    setMoveHistory(getMoveHistory(baseFen, uciMoves));
+    setCapturedPieces(getCapturedPieces(baseFen, uciMoves));
+
+    fenRef.current = nextFen;
+    setFen(nextFen);
+    setReviewPly(null);
+  }
 
   function clearPremoves() {
     premoveQueueRef.current = [];
@@ -731,30 +778,30 @@ function App() {
   }
 
   function getAvailablePremoveMoves(square) {
-  const color = playerColorRef.current;
+    const color = playerColorRef.current;
 
-  if (!isLichessGame || !color) {
-    return [];
+    if (!capabilities.premoves || !color) {
+      return [];
+    }
+
+    const simulatedFen = getPremovePosition(
+      fenRef.current,
+      premoveQueueRef.current,
+      color,
+    );
+
+    if (!simulatedFen) {
+      return [];
+    }
+
+    return getPremoveMovesForPiece(
+      simulatedFen,
+      square,
+      color,
+    );
   }
 
-  const simulatedFen = getPremovePosition(
-    fenRef.current,
-    premoveQueueRef.current,
-    color,
-  );
-
-  if (!simulatedFen) {
-    return [];
-  }
-
-  return getPremoveMovesForPiece(
-    simulatedFen,
-    square,
-    color,
-  );
-}
-
-  function selectSquare(square) {
+function selectSquare(square) {
   const piece = game.get(square);
 
   if (!piece) {
@@ -762,7 +809,7 @@ function App() {
     return;
   }
 
-  const color = isLichessGame
+  const color = capabilities.assignedColor
     ? playerColorRef.current
     : realGame.turn();
 
@@ -794,7 +841,7 @@ function App() {
     return;
   }
 
-  if (isLichessGame && premovesEnabled) {
+  if (capabilities.premoves && premovesEnabled) {
     const moves = getAvailablePremoveMoves(square);
 
     if (!moves.length) {
@@ -1331,6 +1378,8 @@ function reconcilePremoves(nextFen, newMoves) {
             ? 'w'
             : 'b';
 
+        initialFenRef.current = event.initialFen;
+
         const nextFen = applyMoves(
           event.initialFen,
           event.state.moves,
@@ -1340,42 +1389,21 @@ function reconcilePremoves(nextFen, newMoves) {
           event.state.moves,
         );
 
-        const lastUciMove = moves[moves.length - 1];
-
-        initialFenRef.current = event.initialFen;
-
         moveCountRef.current = moves.length;
 
         playerColorRef.current = color;
         setPlayerColor(color);
 
-
         gameIdRef.current = event.id;
         setGameId(event.id);
 
         setGameMode(GAME_MODE.LICHESS);
-        setMatchmaking(false);  
+        setMatchmaking(false);
         setGameStatus('Game in progress');
 
         setOpponentGone(false);
         setClaimWinInSeconds(null);
         setClaimPending(false);
-
-        setMoveHistory(
-          getMoveHistory(
-            event.initialFen,
-            event.state.moves,
-          ),
-        );
-
-        setLastMove(
-          lastUciMove
-            ? {
-                from: lastUciMove.slice(0, 2),
-                to: lastUciMove.slice(2, 4),
-              }
-            : null,
-        );
 
         setDrawOffer(false);
         drawPendingRef.current = false;
@@ -1389,19 +1417,10 @@ function reconcilePremoves(nextFen, newMoves) {
 
         setChatError('');
 
-        fenRef.current = nextFen;
-        setFen(nextFen);
-        setReviewPly(null); 
-        setUciHistory(moves);
-
-        setArrows([]);
-
-        setCapturedPieces(
-          getCapturedPieces(
-            event.initialFen,
-            event.state.moves,
-          ),
-        );
+        commitPosition(nextFen, {
+          uciMoves: moves,
+          clearArrows: true,
+        });
 
         setClockSnapshot({
           wtime: clockValue(
@@ -1426,7 +1445,7 @@ function reconcilePremoves(nextFen, newMoves) {
         return;
       }
 
-      if (
+            if (
         event.type === 'gameState' &&
         initialFenRef.current
       ) {
@@ -1438,8 +1457,6 @@ function reconcilePremoves(nextFen, newMoves) {
         const moves = parseUciMoves(
           event.moves,
         );
-
-        const lastUciMove = moves[moves.length - 1];
 
         const newMoves = moves.slice(
           moveCountRef.current,
@@ -1478,61 +1495,17 @@ function reconcilePremoves(nextFen, newMoves) {
           setDrawPending(Boolean(ownDrawOffer));
         }
 
-        setMoveHistory(
-          getMoveHistory(
-            initialFenRef.current,
-            event.moves,
-          ),
-        );
-
-        setUciHistory(moves);
-
-        setLastMove(
-          lastUciMove
-            ? {
-                from: lastUciMove.slice(0, 2),
-                to: lastUciMove.slice(2, 4),
-              }
-            : null,
-        );
-
-        if (newMoves.length) {
-          setArrows([]);
-          
-          const newCapturedPieces =
-            getCapturedPieces(
-              fenRef.current,
-              newMoves,
-            );
-
-          if (
-            newCapturedPieces.w.length ||
-            newCapturedPieces.b.length
-          ) {
-            setCapturedPieces((current) => ({
-              w: [
-                ...current.w,
-                ...newCapturedPieces.w,
-              ],
-              b: [
-                ...current.b,
-                ...newCapturedPieces.b,
-              ],
-            }));
-          }
-        }
-
         /*
-         * Update the authoritative position BEFORE
-         * reconciling premoves.
+         * Single write path for the position and its derived
+         * state. Replaces the previous hand-rolled updates to
+         * fenRef, fen, uciHistory, moveHistory, lastMove,
+         * capturedPieces, arrows, and reviewPly.
          */
-        fenRef.current = nextFen;
-        setFen(nextFen);
-        setReviewPly(null);
-        /*
-         * This is the important premove reconciliation
-         * point. Every authoritative gameState is checked.
-         */
+        commitPosition(nextFen, {
+          uciMoves: moves,
+          clearArrows: newMoves.length > 0,
+        });
+
         reconcilePremoves(
           nextFen,
           newMoves,
@@ -1570,9 +1543,6 @@ function reconcilePremoves(nextFen, newMoves) {
             `Game ${event.status}`,
           );
 
-          fenRef.current = nextFen;
-          setFen(nextFen);
-
           setOpponentGone(false);
           setClaimWinInSeconds(null);
           setClaimPending(false);
@@ -1581,8 +1551,6 @@ function reconcilePremoves(nextFen, newMoves) {
           setGameId(null);
 
           moveCountRef.current = 0;
-          setReviewPly(null);
-
 
           setGameMode(GAME_MODE.LOCAL);
 
@@ -1701,6 +1669,8 @@ function reconcilePremoves(nextFen, newMoves) {
     setMoveHistory([]);
     setReviewPly(null);
 
+    uciHistoryRef.current = [];
+
     clearSelection();
     closePromotionChoice();
 
@@ -1775,7 +1745,7 @@ function reconcilePremoves(nextFen, newMoves) {
     }
   }
 
-  function handleSquareClick(square) {
+    function handleSquareClick(square) {
     if (isReviewing) return;
     if (promotionChoice) {
       closePromotionChoice();
@@ -1792,7 +1762,7 @@ function reconcilePremoves(nextFen, newMoves) {
       }
 
       if (legalMoves.includes(square)) {
-        const color = isLichessGame
+        const color = capabilities.assignedColor
           ? playerColorRef.current
           : realGame.turn();
 
@@ -1808,7 +1778,7 @@ function reconcilePremoves(nextFen, newMoves) {
             return;
           }
 
-          if (isLichessGame && premovesEnabled) {
+          if (capabilities.premoves && premovesEnabled) {
             const canMove = canPlayerMove(
               gameMode,
               {
@@ -1839,7 +1809,7 @@ function reconcilePremoves(nextFen, newMoves) {
           return;
         }
 
-        if (isLichessGame) {
+        if (capabilities.premoves) {
           queueOrPromptPremove(
             selectedSquare,
             square,
@@ -1914,7 +1884,7 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    if (isLichessGame) {
+    if (capabilities.remoteMoves) {
       if (
         !canPlayerMove(gameMode, {
           piece: movingPiece,
@@ -1942,7 +1912,7 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    if (gameMode !== GAME_MODE.LOCAL) {
+        if (!capabilities.localMoves) {
       return;
     }
 
@@ -1958,40 +1928,26 @@ function reconcilePremoves(nextFen, newMoves) {
         return;
       }
 
-      if (shouldAnimate) {
-        animateMove(
-          from,
-          to,
-          movingPiece,
-        );
+      /*
+       * Local games start from the standard position and have
+       * no server-provided initial FEN. Set it lazily on the
+       * first move so commitPosition has a base to replay from.
+       */
+      if (!initialFenRef.current) {
+        initialFenRef.current = currentFen;
       }
 
-      setLastMove({
-        from: playedMove.from,
-        to: playedMove.to,
+      const uci =
+        `${playedMove.from}${playedMove.to}` +
+        `${playedMove.promotion ?? ''}`;
+
+      commitPosition(currentGame.fen(), {
+        uciMoves: [...uciHistoryRef.current, uci],
+        animate: shouldAnimate
+          ? { from, to, piece: movingPiece }
+          : null,
+        clearArrows: true,
       });
-
-      const nextFen = currentGame.fen();
-
-      fenRef.current = nextFen;
-      setFen(nextFen);
-
-      setArrows([]);
-
-      if (playedMove.captured) {
-        const capturedColor =
-          playedMove.color === 'w'
-            ? 'b'
-            : 'w';
-
-        setCapturedPieces((current) => ({
-          ...current,
-          [capturedColor]: [
-            ...current[capturedColor],
-            playedMove.captured,
-          ],
-        }));
-      }
 
       closePromotionChoice();
       clearSelection();
@@ -2135,7 +2091,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     const piece = game.get(square);
 
-    const color = isLichessGame
+    const color = capabilities.assignedColor
       ? playerColorRef.current
       : realGame.turn();
 
@@ -2154,7 +2110,7 @@ function reconcilePremoves(nextFen, newMoves) {
     * opponent's turn to create premoves.
     */
     if (
-      !isLichessGame &&
+      !capabilities.premoves &&
       realGame.turn() !== color
     ) {
       return;
@@ -2185,8 +2141,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     if (
       !pointerDrag ||
-      pointerDrag.pointerId !==
-        event.pointerId
+      pointerDrag.pointerId !== event.pointerId
     ) {
       return;
     }
@@ -2217,8 +2172,7 @@ function reconcilePremoves(nextFen, newMoves) {
     if (isReviewing) return;
       
     if (
-      !pointerDrag ||
-      pointerDrag.pointerId !== event.pointerId
+      !pointerDrag || pointerDrag.pointerId !== event.pointerId
     ) {
       return;
     }
@@ -2242,7 +2196,7 @@ function reconcilePremoves(nextFen, newMoves) {
     }
 
     if (pointerDrag.moved) {
-      const color = isLichessGame
+      const color = capabilities.assignedColor
         ? playerColorRef.current
         : realGame.turn();
 
@@ -2253,7 +2207,7 @@ function reconcilePremoves(nextFen, newMoves) {
             fenRef.current,
             pointerDrag.square,
           )
-        : isLichessGame
+        : capabilities.premoves
           ? getAvailablePremoveMoves(
               pointerDrag.square,
             )
@@ -2276,7 +2230,7 @@ function reconcilePremoves(nextFen, newMoves) {
             '',
             false,
           );
-        } else if (isLichessGame && premovesEnabled) {
+        } else if (capabilities.premoves && premovesEnabled) {
           queueOrPromptPremove(
             pointerDrag.square,
             pointerDrag.destination,
@@ -2296,8 +2250,7 @@ function reconcilePremoves(nextFen, newMoves) {
   function handleArrowPointerDown(event) {
     if (event.button !== 2) return;
 
-    const square =
-      event.target.closest('[data-square]')?.dataset.square;
+    const square = event.target.closest('[data-square]')?.dataset.square;
     if (!square) return;
 
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -2380,11 +2333,9 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    const nextQueue =
-      queue.slice(0, -1);
+    const nextQueue = queue.slice(0, -1);
 
-    premoveQueueRef.current =
-      nextQueue;
+    premoveQueueRef.current = nextQueue;
 
     setPremoveQueue(nextQueue);
   }
@@ -2409,12 +2360,8 @@ function reconcilePremoves(nextFen, newMoves) {
     const currentGameId =
       gameIdRef.current;
 
-    if (
-      socket?.readyState !==
-        WebSocket.OPEN ||
-      !currentGameId
-    ) {
-      return false;
+    if ( socket?.readyState !== WebSocket.OPEN || !currentGameId) {
+        return false;
     }
 
     setDrawOffer(false);
@@ -2530,11 +2477,7 @@ function reconcilePremoves(nextFen, newMoves) {
             onClick={() =>
               setRightRailView('out-of-game')
             }
-            disabled={
-              gameStatus === 'Game in progress' ||
-              gameStatus === 'Searching for an opponent...' ||
-              gameStatus === 'Draw offered'
-            }
+            disabled={phase !== GAME_PHASE.IDLE}
           >
             Out of game
           </button>
@@ -2811,8 +2754,7 @@ function reconcilePremoves(nextFen, newMoves) {
             default:
               return (
                 <>
-                  {gameMode !==
-                  GAME_MODE.LOCAL ? (
+                  {capabilities.clocks ? (
                     clockSnapshot?.wtime !=
                       null &&
                     clockSnapshot?.btime !=
@@ -2925,7 +2867,7 @@ function reconcilePremoves(nextFen, newMoves) {
                         disabled={matchmaking || Boolean(gameId)}
                       />
                   )}
-                  {isLichessGame && (
+                  {capabilities.premoves && (
                     <label className="premove-toggle">
                       <input
                         type="checkbox"
@@ -2987,7 +2929,7 @@ function reconcilePremoves(nextFen, newMoves) {
                           Resign
                         </button>
 
-                        {isLichessGame &&
+                        {capabilities.claimVictory &&
                           opponentGone &&
                           clockSnapshot?.status === 'started' && (
                             <button
