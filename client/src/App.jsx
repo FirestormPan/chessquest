@@ -5,7 +5,8 @@ import { GAME_MODE, GAME_PHASE, getCapabilities, canPlayerMove } from './gameMod
 import {  TIME_CONTROL_CATEGORIES,  isRatedAllowed,} from './timeControls';
 import PieceVisual from './components/PieceVisual';
 import ChessBoard from './components/ChessBoard';
-import TimeControlPicker from './components/TimeControlPicker';
+import { getBotMove } from './botEngine';
+import RightRail from './components/RightRail';
 
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
@@ -20,16 +21,6 @@ const promotionNames = {
 };
 
 const DOUBLE_CLICK_MS = 300;
-
-function formatClock(milliseconds) {
-  const seconds = Math.max(0, milliseconds) / 1000;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds - minutes * 60;
-
-  return minutes > 0
-    ? `${minutes}:${Math.floor(remainingSeconds).toString().padStart(2, '0')}`
-    : remainingSeconds.toFixed(1).padStart(4, '0');
-}
 
 function clockValue(value) {
   const milliseconds = Number(value);
@@ -51,6 +42,7 @@ function App() {
 
   const playerColorRef = useRef(null);
   const gameIdRef = useRef(null);
+  const botGameEndedRef = useRef(false);
 
   const moveCountRef = useRef(0);
   const lastClickRef = useRef({ square: null, time: 0 });
@@ -142,6 +134,8 @@ function App() {
   const [premoveQueue, setPremoveQueue] = useState([]);
   const [premovesEnabled, setPremovesEnabled] = useState(true);
 
+  const [botActive, setBotActive] = useState(false);
+
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
   // reviewPly === null means "live" (== totalPlies)
@@ -199,9 +193,9 @@ function App() {
 
   const phase = useMemo(() => {
     if (matchmaking) return GAME_PHASE.SEARCHING;
-    if (gameId)      return GAME_PHASE.PLAYING;
+    if (gameId|| botActive) return GAME_PHASE.PLAYING;
     return GAME_PHASE.IDLE;
-  }, [matchmaking, gameId]);
+  }, [matchmaking, gameId, botActive]);
 
   const checkedSquare = getCheckedKingSquare(boardFen);
 
@@ -337,8 +331,13 @@ function App() {
   function closePromotionChoice() {
     setPromotionChoice(null);
   }
+  
+  function handleChatTextChange(value) {
+    setChatText(value);
+    if (chatError) setChatError('');
+  }
 
-    function commitPosition(nextFen, {
+  function commitPosition(nextFen, {
     uciMoves,
     animate = null,
     clearArrows = false,
@@ -551,6 +550,21 @@ function reconcilePremoves(nextFen, newMoves) {
 }
 
   function handleResign() {
+    if (gameMode === GAME_MODE.BOT) {
+      if (!botActive) return;
+      if (!window.confirm('Resign this bot game?')) return;
+
+      botGameEndedRef.current = true;
+      setGameStatus('You resigned.');
+      setBotActive(false);
+      setGameMode(GAME_MODE.LOCAL);
+
+      window.setTimeout(() => {
+        window.alert('You resigned. Bot wins.');
+      }, 0);
+      return;
+    }
+
     const currentGameId = gameIdRef.current;
 
     if (
@@ -644,6 +658,67 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setChatText('');
   }
+
+  useEffect(() => {
+    if (gameMode !== GAME_MODE.BOT) return undefined;
+    if (!botActive) return undefined;
+
+    const humanColor = playerColorRef.current;
+    if (!humanColor) return undefined;
+
+    const botColor = humanColor === 'w' ? 'b' : 'w';
+    const chess = new Chess(fenRef.current);
+
+    if (chess.isGameOver()) return undefined;
+    if (chess.turn() !== botColor) return undefined;
+
+    const timer = window.setTimeout(() => {
+      const latest = new Chess(fenRef.current);
+      if (latest.isGameOver()) return;
+      if (latest.turn() !== botColor) return;
+
+      const move = getBotMove(fenRef.current);
+      if (!move) return;
+
+      makeMove(move.from, move.to, move.promotion || '', true);
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [fen, gameMode, botActive]);
+  useEffect(() => {
+    if (gameMode !== GAME_MODE.BOT) return undefined;
+    if (!botActive) return undefined;
+    if (botGameEndedRef.current) return undefined;
+
+    const chess = new Chess(fen);
+    if (!chess.isGameOver()) return undefined;
+
+    botGameEndedRef.current = true;
+
+    let message = 'Game over.';
+    if (chess.isCheckmate()) {
+      const humanLost = chess.turn() === playerColorRef.current;
+      message = humanLost ? 'Checkmate. Bot wins.' : 'Checkmate. You win!';
+    } else if (chess.isStalemate()) {
+      message = 'Stalemate — draw.';
+    } else if (chess.isThreefoldRepetition()) {
+      message = 'Draw by threefold repetition.';
+    } else if (chess.isInsufficientMaterial()) {
+      message = 'Draw by insufficient material.';
+    } else if (chess.isDraw()) {
+      message = 'Draw.';
+    }
+
+    window.setTimeout(() => {
+      window.alert(message);
+    }, 0);
+
+    setGameStatus(message);
+    setBotActive(false);
+    setGameMode(GAME_MODE.LOCAL);
+
+    return undefined;
+  }, [fen, gameMode, botActive]);
 
   useEffect(() => {
     premoveQueueRef.current = premoveQueue;
@@ -1257,6 +1332,9 @@ function reconcilePremoves(nextFen, newMoves) {
     gameIdRef.current = null;
     moveCountRef.current = 0;
 
+    botGameEndedRef.current = false;
+    setBotActive(false);
+
     drawPendingRef.current = false;
 
     setGameId(null);
@@ -1347,16 +1425,71 @@ function reconcilePremoves(nextFen, newMoves) {
       setClaimWinInSeconds(null);
       setClaimPending(false);
 
+      botGameEndedRef.current = false;
+      setBotActive(false);
+
       setAccount(null);
     } catch {
       // Keep the UI responsive.
     }
   }
 
-    function handleSquareClick(square) {
+  function handlePlayBot() {
+    clearPremoves();
+
+    const newGame = new Chess();
+    const startFen = newGame.fen();
+
+    fenRef.current = startFen;
+    setFen(startFen);
+
+    initialFenRef.current = startFen;
+    playerColorRef.current = 'w';
+    gameIdRef.current = null;
+    moveCountRef.current = 0;
+    drawPendingRef.current = false;
+    botGameEndedRef.current = false;
+
+    setGameId(null);
+    setGameMode(GAME_MODE.BOT);
+    setPlayerColor('w');
+    setBotActive(true);
+
+    setCapturedPieces({ w: [], b: [] });
+    setClockSnapshot(null);
+    setLastMove(null);
+    setDrawOffer(false);
+    setDrawPending(false);
+
+    setChatMessages([]);
+    setChatText('');
+    setChatError('');
+
+    setArrows([]);
+    setUciHistory([]);
+    setMoveHistory([]);
+    setReviewPly(null);
+    uciHistoryRef.current = [];
+
+    clearSelection();
+    closePromotionChoice();
+
+    setOpponentGone(false);
+    setClaimWinInSeconds(null);
+    setClaimPending(false);
+
+    setGameStatus('Playing vs Bot (1000)');
+    setRightRailView('game');
+  }
+
+  function handleSquareClick(square) {
     if (isReviewing) return;
     if (promotionChoice) {
       closePromotionChoice();
+      return;
+    }
+
+    if (new Chess(fenRef.current).isGameOver()) {
       return;
     }
 
@@ -1683,6 +1816,9 @@ function reconcilePremoves(nextFen, newMoves) {
   function handlePointerDown(event, square) {
     if (isReviewing) return;
     if (event.button !== 0) {
+      return;
+    }
+    if (new Chess(fenRef.current).isGameOver()) {
       return;
     }
     /*
@@ -2082,12 +2218,10 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            onClick={() =>
-              setRightRailView('out-of-game')
-            }
+            onClick={() => setRightRailView('bot')}
             disabled={phase !== GAME_PHASE.IDLE}
           >
-            Out of game
+            Vs Bot
           </button>
         </div>
 
@@ -2267,550 +2401,67 @@ function reconcilePremoves(nextFen, newMoves) {
         </div>
       </section>
 
-      <aside
-        className="right-rail"
-        aria-label="Game controls and chat"
-      >
-        {(() => {
-          switch (rightRailView) {
-            case 'hello':
-              return (
-                <div
-                  className="skin-picker"
-                  aria-label="Choose a piece skin"
-                >
-                  <div className="skin-picker-heading">
-                    <span className="chat-kicker">
-                      Piece skins
-                    </span>
-
-                    <h2>Choose a set</h2>
-
-                    <label className="skin-opponent-toggle">
-                      <input
-                        type="checkbox"
-                        checked={
-                          selectingOpponentSkin
-                        }
-                        onChange={(event) =>
-                          setSelectingOpponentSkin(
-                            event.target.checked,
-                          )
-                        }
-                      />
-                      Select for opponent
-                    </label>
-                  </div>
-
-                  <div className="skin-options">
-                    {skinFolders.map(
-                      (folder) => (
-                        <button
-                          className={`skin-option ${
-                            selectedSkinFolder === folder
-                              ? 'selected player-selected'
-                              : ''
-                          } ${
-                            selectedOpponentSkinFolder === folder
-                              ? 'selected opponent-selected'
-                              : ''
-                          }`}
-                          key={folder}
-                          type="button"
-                          onClick={() =>
-                            selectSkinFolder(
-                              folder,
-                            )
-                          }
-                          disabled={
-                            selectingOpponentSkin
-                              ? selectedSkinFolder === folder
-                              : selectedOpponentSkinFolder === folder
-                          }
-                          aria-label={
-                            selectedSkinFolder === folder
-                              ? `${folder} selected for player`
-                              : selectedOpponentSkinFolder === folder
-                                ? `${folder} selected for opponent`
-                                : `Equip ${folder} piece skin`
-                          }
-                        >
-                          <img
-                            src={`/${folder}/king.png`}
-                            alt={`${folder} king skin`}
-                          />
-
-                          <span>
-                            {folder}
-                          </span>
-                        </button>
-                      ),
-                    )}
-                  </div>
-
-                  {!skinFolders.length && (
-                    <p className="skin-empty">
-                      No piece skins found.
-                    </p>
-                  )}
-                </div>
-              );
-
-            case 'out-of-game':
-              return <div>out of game</div>;
-
-            default:
-              return (
-                <>
-                  {capabilities.clocks ? (
-                    clockSnapshot?.wtime != null &&
-                    clockSnapshot?.btime != null && 
-                    (
-                      <div
-                        className="clock-panel"
-                        aria-label="Time remaining"
-                      >
-                        <div
-                          className={`clock-card ${
-                            clockSnapshot.turn === 'w'
-                              ? 'active'
-                              : ''
-                          } ${
-                            whiteTime < 30000
-                              ? 'low-time'
-                              : ''
-                          }`}
-                        >
-                          <span className="clock-player">
-                            White
-                          </span>
-
-                          <strong>
-                            {formatClock(
-                              whiteTime,
-                            )}
-                          </strong>
-
-                          <div className="capture-group">
-                            <div className="capture-pieces">
-                              {capturedPieces.b.map(
-                                (
-                                  piece,
-                                  index,
-                                ) => (
-                                  <span
-                                    className="captured-piece"
-                                    key={`${piece}-${index}`}
-                                  >
-                                    <PieceVisual
-                                      color="b"
-                                      type={
-                                        piece
-                                      }
-                                      skinFolder={getSkinFolderForColor(
-                                        'b',
-                                      )}
-                                    />
-                                  </span>
-                                ),
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div
-                          className={`clock-card ${
-                            clockSnapshot.turn === 'b'
-                              ? 'active'
-                              : ''
-                          } ${
-                            blackTime < 30000
-                              ? 'low-time'
-                              : ''
-                          }`}
-                        >
-                          <span className="clock-player">
-                            Black
-                          </span>
-
-                          <strong>
-                            {formatClock(
-                              blackTime,
-                            )}
-                          </strong>
-
-                          <div className="capture-group">
-                            <div className="capture-pieces">
-                              {capturedPieces.w.map(
-                                (
-                                  piece,
-                                  index,
-                                ) => (
-                                  <span
-                                    className="captured-piece"
-                                    key={`${piece}-${index}`}
-                                  >
-                                    <PieceVisual
-                                      color="w"
-                                      type={
-                                        piece
-                                      }
-                                      skinFolder={getSkinFolderForColor(
-                                        'w',
-                                      )}
-                                    />
-                                  </span>
-                                ),
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  ) : (
-                      <TimeControlPicker
-                        value={selectedTimeControl}
-                        onChange={setSelectedTimeControl}
-                        disabled={matchmaking || Boolean(gameId)}
-                      />
-                  )}
-                  {capabilities.premoves && (
-                    <label className="premove-toggle">
-                      <input
-                        type="checkbox"
-                        checked={premovesEnabled}
-                        onChange={(event) => setPremovesEnabled(event.target.checked)}
-                      />
-                      <span>Enable premoves</span>
-                    </label>
-                  )}
-                  <div
-                    className="game-actions"
-                    aria-label="Game actions"
-                  >
-                    <button
-                      className="account-button"
-                      type="button"
-                      onClick={
-                        matchmaking
-                          ? handleCancel
-                          : handlePlay
-                      }
-                      disabled={
-                        !socketReady ||
-                        cancellingMatchmaking ||
-                        (!matchmaking &&
-                          Boolean(gameId))
-                      }
-                    >
-                      {cancellingMatchmaking
-                        ? 'Cancelling...'
-                        : matchmaking
-                          ? 'Cancel'
-                          : gameId
-                            ? 'Playing'
-                            : socketReady
-                              ? 'Play'
-                              : 'Connecting...'}
-                    </button>
-
-                    {gameId && (
-                      <>
-                        <button
-                          className="account-button"
-                          type="button"
-                          onClick={handleDraw}
-                        >
-                          {drawOffer
-                            ? 'Accept draw'
-                            : drawPending
-                              ? 'Cancel draw offer'
-                              : 'Offer draw'}
-                        </button>
-
-                        <button
-                          className="account-button danger"
-                          type="button"
-                          onClick={handleResign}
-                        >
-                          Resign
-                        </button>
-
-                        {capabilities.claimVictory &&
-                          opponentGone &&
-                          clockSnapshot?.status === 'started' && (
-                            <button
-                              className="account-button"
-                              type="button"
-                              onClick={handleClaimVictory}
-                              disabled={claimPending || claimWinInSeconds > 0}
-                            >
-                              {claimPending
-                                ? 'Claiming…'
-                                : claimWinInSeconds > 0
-                                  ? `Claim victory in ${claimWinInSeconds}s`
-                                  : 'Claim victory'}
-                            </button>
-                          )}
-                      </>
-                    )}
-                  </div>
-
-                  <div
-                    className="chat-panel"
-                    aria-label="Game chat and move history"
-                  >
-                    
-                   <div className="chat-header">
-                    <div>
-                      <span className="chat-kicker">Lichess</span>
-                      <h2>
-                        {rightRailView === 'history' ? 'Move history' : 'Game chat'}
-                      </h2>
-                    </div>
-
-                    <div className="chat-header-actions">
-                      {rightRailView === 'history' && uciHistory.length > 0 && (
-                        <>
-                          <button
-                            className="history-step-button"
-                            type="button"
-                            onClick={stepBackward}
-                            disabled={!canStepBackward}
-                            aria-label="Previous move"
-                            title="Previous move"
-                          >
-                            ‹
-                          </button>
-
-                          <button
-                            className="history-step-button"
-                            type="button"
-                            onClick={stepForward}
-                            disabled={!canStepForward}
-                            aria-label="Next move"
-                            title="Next move"
-                          >
-                            ›
-                          </button>
-
-                          <button
-                            className={`account-button secondary history-live-button ${
-                              isReviewing ? 'is-reviewing' : ''
-                            }`}
-                            type="button"
-                            onClick={() => setReviewPly(null)}
-                            disabled={!isReviewing}
-                          >
-                            {isReviewing ? '⟲ Live' : '● Live'}
-                          </button>
-                        </>
-                      )}
-
-                      <button
-                        className="account-button secondary"
-                        type="button"
-                        onClick={() =>
-                          setRightRailView((current) =>
-                            current === 'history' ? 'game' : 'history',
-                          )
-                        }
-                        aria-pressed={rightRailView === 'history'}
-                      >
-                        {rightRailView === 'history' ? 'Chat' : 'History'}
-                      </button>
-                    </div>
-                  </div>
-                    
-
-                    {rightRailView === 'history' ? (
-                      <div className="move-history">
-                        {moveHistory.length === 0 ? (
-                          <p className="chat-empty">No moves yet.</p>
-                        ) : (
-                          moveHistory
-                            .reduce((rows, move, index) => {
-                              if (move.color === 'w') {
-                                rows.push({
-                                  number: move.number,
-                                  white: move.san,
-                                  whitePly: index + 1,
-                                  black: '',
-                                  blackPly: null,
-                                });
-                              } else if (rows.length) {
-                                const last = rows[rows.length - 1];
-                                last.black = move.san;
-                                last.blackPly = index + 1;
-                              }
-                              return rows;
-                            }, [])
-                            .map((row) => {
-                              const isWhiteCurrent = reviewPly === row.whitePly;
-                              const isBlackCurrent =
-                                row.blackPly != null && reviewPly === row.blackPly;
-
-                              return (
-                                <div className="history-row" key={row.number}>
-                                  <span>{row.number}. </span>
-                                  <button
-                                    type="button"
-                                    className={`history-move ${
-                                      isWhiteCurrent ? 'current' : ''
-                                    }`}
-                                    onClick={() =>
-                                      setReviewPly(
-                                        reviewPly === row.whitePly ? null : row.whitePly,
-                                      )
-                                    }
-                                  >
-                                    {row.white}
-                                  </button>
-                                  {row.blackPly != null && (
-                                    <>
-                                      <span> | </span>
-                                      <button
-                                        type="button"
-                                        className={`history-move ${
-                                          isBlackCurrent ? 'current' : ''
-                                        }`}
-                                        onClick={() =>
-                                          setReviewPly(
-                                            reviewPly === row.blackPly
-                                              ? null
-                                              : row.blackPly,
-                                          )
-                                        }
-                                      >
-                                        {row.black}
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              );
-                            })
-                        )}
-                      </div>
-                    ) : (
-                      <>
-                        <div
-                          className="chat-messages"
-                          ref={
-                            chatMessagesRef
-                          }
-                          aria-live="polite"
-                        >
-                          {!gameId && (
-                            <p className="chat-empty">
-                              Join a game to
-                              chat.
-                            </p>
-                          )}
-
-                          {gameId &&
-                            chatMessages.length === 0 &&
-                            (
-                              <p className="chat-empty">
-                                No messages yet.
-                              </p>
-                            )}
-
-                          {chatMessages.map(
-                            (
-                              message,
-                              index,
-                            ) => (
-                              <div
-                                className="chat-message"
-                                key={`${message.username}-${message.text}-${index}`}
-                              >
-                                <strong>
-                                  {
-                                    message.username
-                                  }
-                                </strong>
-
-                                <span>
-                                  {
-                                    message.text
-                                  }
-                                </span>
-                              </div>
-                            ),
-                          )}
-                        </div>
-
-                        <form
-                          className="chat-form"
-                          onSubmit={ handleChatSubmit }
-                        >
-                          <label
-                            className="sr-only"
-                            htmlFor="chat-message"
-                          >
-                            Chat message
-                          </label>
-
-                          <input
-                            id="chat-message"
-                            type="text"
-                            value={chatText}
-                            maxLength={140}
-                            placeholder={
-                              gameId
-                                ? 'Write a message'
-                                : 'Join a game first'
-                            }
-                            disabled={ !gameId || !socketReady }
-                            onChange={(
-                              event,
-                            ) => {
-                              setChatText(
-                                event.target.value,
-                              );
-
-                              if (chatError) {
-                                setChatError('');
-                              }
-                            }}
-                          />
-
-                          <button
-                            className="chat-send"
-                            type="submit"
-                            disabled={
-                              !gameId ||
-                              !socketReady ||
-                              !chatText.trim()
-                            }
-                            aria-label="Send chat message"
-                          >
-                            Send
-                          </button>
-                        </form>
-
-                        <div className="chat-footer">
-                          <span>
-                            {chatText.length}
-                            /140
-                          </span>
-
-                          {chatError && (
-                            <span
-                              className="chat-error"
-                              role="alert"
-                            >
-                              {chatError}
-                            </span>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </>
-              );
+      <aside className="right-rail" aria-label="Game controls and chat">
+        <RightRail
+          view={rightRailView}
+          gameMode={gameMode}
+          capabilities={capabilities}
+          phase={phase}
+          clockSnapshot={clockSnapshot}
+          whiteTime={whiteTime}
+          blackTime={blackTime}
+          capturedPieces={capturedPieces}
+          getSkinFolderForColor={getSkinFolderForColor}
+          selectedTimeControl={selectedTimeControl}
+          setSelectedTimeControl={setSelectedTimeControl}
+          matchmaking={matchmaking}
+          gameId={gameId}
+          botActive={botActive}
+          playerColor={playerColor}
+          gameStatus={gameStatus}
+          onPlayBot={handlePlayBot}
+          skinFolders={skinFolders}
+          selectedSkinFolder={selectedSkinFolder}
+          selectedOpponentSkinFolder={selectedOpponentSkinFolder}
+          selectingOpponentSkin={selectingOpponentSkin}
+          onToggleSelectingOpponent={setSelectingOpponentSkin}
+          onSelectSkinFolder={selectSkinFolder}
+          socketReady={socketReady}
+          cancellingMatchmaking={cancellingMatchmaking}
+          premovesEnabled={premovesEnabled}
+          onTogglePremoves={setPremovesEnabled}
+          onPlay={handlePlay}
+          onCancel={handleCancel}
+          drawOffer={drawOffer}
+          drawPending={drawPending}
+          onDraw={handleDraw}
+          onResign={handleResign}
+          opponentGone={opponentGone}
+          claimPending={claimPending}
+          claimWinInSeconds={claimWinInSeconds}
+          onClaimVictory={handleClaimVictory}
+          moveHistory={moveHistory}
+          reviewPly={reviewPly}
+          onSelectPly={setReviewPly}
+          chatMessages={chatMessages}
+          chatText={chatText}
+          chatError={chatError}
+          onChatTextChange={handleChatTextChange}
+          onChatSubmit={handleChatSubmit}
+          chatMessagesRef={chatMessagesRef}
+          uciHistory={uciHistory}
+          onToggleHistory={() =>
+            setRightRailView((current) =>
+              current === 'history' ? 'game' : 'history',
+            )
           }
-        })()}
+          onStepBackward={stepBackward}
+          onStepForward={stepForward}
+          onReturnLive={() => setReviewPly(null)}
+          canStepBackward={canStepBackward}
+          canStepForward={canStepForward}
+          isReviewing={isReviewing}
+        />
       </aside>
     </main>
   );

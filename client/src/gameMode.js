@@ -41,7 +41,7 @@ export function getCapabilities(mode) {
     premoves: isLichess,
 
     // Show clocks and enforce time forfeit.
-    clocks: isLichess || isBot,
+    clocks: isLichess,
 
     // Matchmaking / cancel flow.
     matchmaking: isLichess,
