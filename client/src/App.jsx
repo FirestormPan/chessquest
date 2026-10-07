@@ -2256,8 +2256,7 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            onClick={() => setRightRailView('bot')}
-            disabled={phase !== GAME_PHASE.IDLE}
+            onClick={() => setRightRailView(botActive ? 'game' : 'bot')}
           >
             Vs Bot
           </button>
