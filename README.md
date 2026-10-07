@@ -25,3 +25,7 @@ Send a move as JSON:
 ```json
 {"type":"game.move","from":"e2","to":"e4"}
 ```
+
+The local practice bot bundles Stockfish.js 10.0.2 under GPL-3.0. Its upstream
+source is https://github.com/niklasf/stockfish.js, and its license is included
+at `client/bot-engine/LICENSE.txt`.

@@ -4,6 +4,7 @@ import ClockPanel from './ClockPanel';
 import MoveHistory from './MoveHistory';
 import ChatBody from './ChatBody';
 import GameActions from './GameActions';
+import { BOT_STRENGTHS } from '../botEngine';
 
 export default function RightRail({
   view,
@@ -24,6 +25,9 @@ export default function RightRail({
 
   // bot
   botActive,
+  botStrength = 1000,
+  onBotStrengthChange,
+  botThinking = false,
   playerColor,
   gameStatus,
   onPlayBot,
@@ -139,8 +143,29 @@ export default function RightRail({
         </div>
 
         <p className="bot-picker-description">
-          Challenge a bot rated around 1000.
+          Choose an estimated bot strength.
         </p>
+
+        <fieldset className="bot-strength-picker">
+          <legend>Strength</legend>
+          <div className="bot-strength-options">
+            {BOT_STRENGTHS.map((strength) => (
+              <label
+                className={botStrength === strength ? 'is-selected' : ''}
+                key={strength}
+              >
+                <input
+                  type="radio"
+                  name="bot-strength"
+                  value={strength}
+                  checked={botStrength === strength}
+                  onChange={() => onBotStrengthChange(strength)}
+                />
+                <span>~{strength}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <button
           className="account-button"
@@ -148,7 +173,7 @@ export default function RightRail({
           onClick={onPlayBot}
           disabled={phase !== GAME_PHASE.IDLE}
         >
-          Play vs Bot
+          Play vs Bot (~{botStrength})
         </button>
       </div>
     );
@@ -162,8 +187,9 @@ export default function RightRail({
           <h2>{botActive ? 'Playing vs Bot' : 'Bot game'}</h2>
           {botActive ? (
             <>
-              <p>Bot rating: 1000</p>
+              <p>Estimated strength: ~{botStrength}</p>
               <p>You play: {playerColor === 'w' ? 'White' : 'Black'}</p>
+              {botThinking && <p role="status">Bot thinking...</p>}
             </>
           ) : (
             <p>{gameStatus || 'No bot game in progress.'}</p>
@@ -193,6 +219,14 @@ export default function RightRail({
             moveHistory={moveHistory}
             reviewPly={reviewPly}
             onSelectPly={onSelectPly}
+            uciHistory={uciHistory}
+            canStepBackward={canStepBackward}
+            canStepForward={canStepForward}
+            onStepBackward={onStepBackward}
+            onStepForward={onStepForward}
+            onReturnLive={onReturnLive}
+            isReviewing={isReviewing}
+            showControls
           />
         </div>
       </>

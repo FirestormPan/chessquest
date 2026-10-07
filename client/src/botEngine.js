@@ -1,192 +1,147 @@
-import { Chess } from 'chess.js';
+const ENGINE_URL = '/bot-engine/stockfish.wasm.js';
+export const BOT_STRENGTHS = [400, 800, 1000, 1200, 1500, 1800, 2000];
 
-const PIECE_VALUES = {
-  p: 100,
-  n: 320,
-  b: 330,
-  r: 500,
-  q: 900,
-  k: 0,
+const BOT_PROFILES = {
+  400: { skillLevel: 0, moveTimeMs: 80 },
+  800: { skillLevel: 0, moveTimeMs: 180 },
+  1000: { skillLevel: 0, moveTimeMs: 350 },
+  1200: { skillLevel: 2, moveTimeMs: 350 },
+  1500: { skillLevel: 5, moveTimeMs: 350 },
+  1800: { skillLevel: 9, moveTimeMs: 350 },
+  2000: { skillLevel: 13, moveTimeMs: 350 },
 };
 
-// Simplified evaluation PSTs (index 0 = a8, 63 = h1, white's perspective).
-const PAWN_PST = [
-  0,  0,  0,  0,  0,  0,  0,  0,
-  50, 50, 50, 50, 50, 50, 50, 50,
-  10, 10, 20, 30, 30, 20, 10, 10,
-  5,  5, 10, 25, 25, 10,  5,  5,
-  0,  0,  0, 20, 20,  0,  0,  0,
-  5, -5,-10,  0,  0,-10, -5,  5,
-  5, 10, 10,-20,-20, 10, 10,  5,
-  0,  0,  0,  0,  0,  0,  0,  0,
-];
+let engineWorker = null;
+let engineReady = null;
+let activeSearch = null;
+let requestQueue = Promise.resolve();
+const lineWaiters = [];
 
-const KNIGHT_PST = [
-  -50,-40,-30,-30,-30,-30,-40,-50,
-  -40,-20,  0,  0,  0,  0,-20,-40,
-  -30,  0, 10, 15, 15, 10,  0,-30,
-  -30,  5, 15, 20, 20, 15,  5,-30,
-  -30,  0, 15, 20, 20, 15,  0,-30,
-  -30,  5, 10, 15, 15, 10,  5,-30,
-  -40,-20,  0,  5,  5,  0,-20,-40,
-  -50,-40,-30,-30,-30,-30,-40,-50,
-];
-
-const BISHOP_PST = [
-  -20,-10,-10,-10,-10,-10,-10,-20,
-  -10,  0,  0,  0,  0,  0,  0,-10,
-  -10,  0,  5, 10, 10,  5,  0,-10,
-  -10,  5,  5, 10, 10,  5,  5,-10,
-  -10,  0, 10, 10, 10, 10,  0,-10,
-  -10, 10, 10, 10, 10, 10, 10,-10,
-  -10,  5,  0,  0,  0,  0,  5,-10,
-  -20,-10,-10,-10,-10,-10,-10,-20,
-];
-
-const ROOK_PST = [
-  0,  0,  0,  0,  0,  0,  0,  0,
-  5, 10, 10, 10, 10, 10, 10,  5,
-  -5,  0,  0,  0,  0,  0,  0, -5,
-  -5,  0,  0,  0,  0,  0,  0, -5,
-  -5,  0,  0,  0,  0,  0,  0, -5,
-  -5,  0,  0,  0,  0,  0,  0, -5,
-  -5,  0,  0,  0,  0,  0,  0, -5,
-  0,  0,  0,  5,  5,  0,  0,  0,
-];
-
-const QUEEN_PST = [
-  -20,-10,-10, -5, -5,-10,-10,-20,
-  -10,  0,  0,  0,  0,  0,  0,-10,
-  -10,  0,  5,  5,  5,  5,  0,-10,
-  -5,  0,  5,  5,  5,  5,  0, -5,
-  0,  0,  5,  5,  5,  5,  0, -5,
-  -10,  5,  5,  5,  5,  5,  0,-10,
-  -10,  0,  5,  0,  0,  0,  0,-10,
-  -20,-10,-10, -5, -5,-10,-10,-20,
-];
-
-const KING_PST = [
-  -30,-40,-40,-50,-50,-40,-40,-30,
-  -30,-40,-40,-50,-50,-40,-40,-30,
-  -30,-40,-40,-50,-50,-40,-40,-30,
-  -30,-40,-40,-50,-50,-40,-40,-30,
-  -20,-30,-30,-40,-40,-30,-30,-20,
-  -10,-20,-20,-20,-20,-20,-20,-10,
-  20, 20,  0,  0,  0,  0, 20, 20,
-  20, 30, 10,  0,  0, 10, 30, 20,
-];
-
-const PST = {
-  p: PAWN_PST,
-  n: KNIGHT_PST,
-  b: BISHOP_PST,
-  r: ROOK_PST,
-  q: QUEEN_PST,
-  k: KING_PST,
-};
-
-function squareIndex(square, color) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = parseInt(square[1], 10);
-  const row = 8 - rank;
-  let index = row * 8 + file;
-  if (color === 'b') index = 63 - index;
-  return index;
+function waitForLine(prefix) {
+  return new Promise((resolve, reject) => {
+    lineWaiters.push({ prefix, resolve, reject });
+  });
 }
 
-function evaluateMaterialAndPst(chess) {
-  let score = 0;
-  const board = chess.board();
-  for (let r = 0; r < 8; r++) {
-    for (let f = 0; f < 8; f++) {
-      const sq = board[r][f];
-      if (!sq) continue;
-      const material = PIECE_VALUES[sq.type];
-      const positional = PST[sq.type][squareIndex(sq.square, sq.color)];
-      const value = material + positional;
-      score += sq.color === 'w' ? value : -value;
-    }
+function handleEngineMessage(event) {
+  const line = String(event.data);
+  const waiterIndex = lineWaiters.findIndex(({ prefix }) =>
+    line.startsWith(prefix),
+  );
+
+  if (waiterIndex !== -1) {
+    lineWaiters.splice(waiterIndex, 1)[0].resolve(line);
   }
-  return score;
+
+  if (line.startsWith('bestmove ') && activeSearch) {
+    const search = activeSearch;
+    activeSearch = null;
+    search.resolve(line);
+  }
 }
 
-function evaluate(chess) {
-  if (chess.isCheckmate()) {
-    return chess.turn() === 'w' ? -100000 : 100000;
+function failEngine(error) {
+  for (const waiter of lineWaiters.splice(0)) {
+    waiter.reject(error);
   }
-  if (chess.isDraw() || chess.isStalemate()) {
-    return 0;
+
+  if (activeSearch) {
+    const search = activeSearch;
+    activeSearch = null;
+    search.resolve(null);
   }
-  return evaluateMaterialAndPst(chess);
 }
 
-function relativeEval(chess) {
-  const score = evaluate(chess);
-  return chess.turn() === 'w' ? score : -score;
-}
+function getEngine() {
+  if (engineReady) return engineReady;
 
-function negamax(chess, depth, alpha, beta) {
-  if (depth === 0 || chess.isGameOver()) {
-    return relativeEval(chess);
-  }
-
-  const moves = chess.moves({ verbose: true });
-  // Captures first: cheap alpha-beta ordering.
-  moves.sort((a, b) => {
-    const av = a.captured ? PIECE_VALUES[a.captured] : 0;
-    const bv = b.captured ? PIECE_VALUES[b.captured] : 0;
-    return bv - av;
+  const worker = new Worker(ENGINE_URL);
+  engineWorker = worker;
+  worker.addEventListener('message', handleEngineMessage);
+  worker.addEventListener('error', (event) => {
+    if (engineWorker !== worker) return;
+    failEngine(event.error ?? new Error('Stockfish worker failed to load'));
+    worker.terminate();
+    engineWorker = null;
+    engineReady = null;
   });
 
-  let best = -Infinity;
-  for (const move of moves) {
-    chess.move(move);
-    const score = -negamax(chess, depth - 1, -beta, -alpha);
-    chess.undo();
+  const ready = waitForLine('uciok');
+  engineReady = ready.then(() => worker).catch((error) => {
+    worker.terminate();
+    if (engineWorker === worker) {
+      engineWorker = null;
+      engineReady = null;
+    }
+    throw error;
+  });
+  worker.postMessage('uci');
 
-    if (score > best) best = score;
-    if (best > alpha) alpha = best;
-    if (alpha >= beta) break;
-  }
-
-  return best;
+  return engineReady;
 }
 
-export function getBotMove(fen, { depth = 2, randomness = 0.35 } = {}) {
-  const chess = new Chess(fen);
-  const moves = chess.moves({ verbose: true });
-  if (!moves.length) return null;
+async function synchronize(worker) {
+  const ready = waitForLine('readyok');
+  worker.postMessage('isready');
+  await ready;
+}
 
-  const scored = moves.map((move) => {
-    chess.move(move);
-    const score = -negamax(chess, depth - 1, -Infinity, Infinity);
-    chess.undo();
-    return { move, score };
-  });
+function parseBestMove(line) {
+  const uci = line?.split(/\s+/)[1];
+  if (!uci || uci === '(none)' || uci === '0000') return null;
 
-  scored.sort((a, b) => b.score - a.score);
-
-  let chosenIndex = 0;
-
-  if (Math.random() < randomness && scored.length > 1) {
-    // Occasionally pick a suboptimal move to feel like ~1000 Elo.
-    const topN = Math.min(3, scored.length);
-    chosenIndex = Math.floor(Math.random() * topN);
-  } else {
-    // Among moves tied for best, pick randomly.
-    const bestScore = scored[0].score;
-    const tiedIndices = [];
-    for (let i = 0; i < scored.length; i++) {
-      if (scored[i].score === bestScore) tiedIndices.push(i);
-    }
-    chosenIndex =
-      tiedIndices[Math.floor(Math.random() * tiedIndices.length)];
-  }
-
-  const chosen = scored[chosenIndex].move;
   return {
-    from: chosen.from,
-    to: chosen.to,
-    promotion: chosen.promotion,
+    from: uci.slice(0, 2),
+    to: uci.slice(2, 4),
+    promotion: uci[4] || undefined,
   };
+}
+
+async function searchPosition(fen, strength, signal) {
+  if (signal?.aborted) return null;
+
+  const worker = await getEngine();
+  if (signal?.aborted) return null;
+
+  const profile = BOT_PROFILES[strength] ?? BOT_PROFILES[1000];
+  worker.postMessage(`setoption name Skill Level value ${profile.skillLevel}`);
+
+  await synchronize(worker);
+  if (signal?.aborted) return null;
+
+  worker.postMessage(`position fen ${fen}`);
+
+  let search;
+  const result = new Promise((resolve) => {
+    search = { resolve };
+    activeSearch = search;
+  });
+
+  const stopSearch = () => {
+    if (activeSearch === search) worker.postMessage('stop');
+  };
+
+  signal?.addEventListener('abort', stopSearch, { once: true });
+  if (signal?.aborted) {
+    signal.removeEventListener('abort', stopSearch);
+    if (activeSearch === search) {
+      activeSearch = null;
+      search.resolve(null);
+    }
+    return null;
+  }
+
+  worker.postMessage(`go movetime ${profile.moveTimeMs}`);
+  const bestMove = await result;
+  signal?.removeEventListener('abort', stopSearch);
+
+  return signal?.aborted ? null : parseBestMove(bestMove);
+}
+
+export function getBotMove(fen, { strength = 1000, signal } = {}) {
+  const request = requestQueue.then(() =>
+    searchPosition(fen, strength, signal),
+  );
+  requestQueue = request.then(() => undefined, () => undefined);
+  return request;
 }

@@ -43,6 +43,7 @@ function App() {
   const playerColorRef = useRef(null);
   const gameIdRef = useRef(null);
   const botGameEndedRef = useRef(false);
+  const botSearchControllerRef = useRef(null);
 
   const moveCountRef = useRef(0);
   const lastClickRef = useRef({ square: null, time: 0 });
@@ -135,6 +136,8 @@ function App() {
   const [premovesEnabled, setPremovesEnabled] = useState(true);
 
   const [botActive, setBotActive] = useState(false);
+  const [botStrength, setBotStrength] = useState(1000);
+  const [botThinking, setBotThinking] = useState(false);
 
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
@@ -554,6 +557,7 @@ function reconcilePremoves(nextFen, newMoves) {
       if (!botActive) return;
       if (!window.confirm('Resign this bot game?')) return;
 
+      botSearchControllerRef.current?.abort();
       botGameEndedRef.current = true;
       setGameStatus('You resigned.');
       setBotActive(false);
@@ -672,19 +676,61 @@ function reconcilePremoves(nextFen, newMoves) {
     if (chess.isGameOver()) return undefined;
     if (chess.turn() !== botColor) return undefined;
 
-    const timer = window.setTimeout(() => {
-      const latest = new Chess(fenRef.current);
-      if (latest.isGameOver()) return;
-      if (latest.turn() !== botColor) return;
+    const requestFen = fenRef.current;
+    const controller = new AbortController();
+    botSearchControllerRef.current = controller;
+    setBotThinking(true);
 
-      const move = getBotMove(fenRef.current);
-      if (!move) return;
+    const timer = window.setTimeout(async () => {
+      try {
+         const move = await getBotMove(requestFen, { strength: botStrength, signal: controller.signal });
 
-      makeMove(move.from, move.to, move.promotion || '', true);
+        if (
+          !move ||
+          controller.signal.aborted ||
+          botGameEndedRef.current ||
+          fenRef.current !== requestFen
+        ) {
+          return;
+        }
+
+        const latest = new Chess(fenRef.current);
+        const isLegal = latest.moves({ verbose: true }).some(
+          (candidate) =>
+            candidate.from === move.from &&
+            candidate.to === move.to &&
+            candidate.promotion === move.promotion,
+        );
+
+        if (latest.isGameOver() || latest.turn() !== botColor || !isLegal) {
+          if (!latest.isGameOver()) {
+            setGameStatus('Bot engine returned an invalid move.');
+          }
+          return;
+        }
+
+        makeMove(move.from, move.to, move.promotion || '', true);
+      } catch {
+        if (!controller.signal.aborted) {
+          setGameStatus('Unable to start the bot engine.');
+        }
+      } finally {
+        if (botSearchControllerRef.current === controller) {
+          botSearchControllerRef.current = null;
+          setBotThinking(false);
+        }
+      }
     }, 400);
 
-    return () => window.clearTimeout(timer);
-  }, [fen, gameMode, botActive]);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+      if (botSearchControllerRef.current === controller) {
+        botSearchControllerRef.current = null;
+        setBotThinking(false);
+      }
+    };
+  }, [fen, gameMode, botActive, botStrength]);
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return undefined;
     if (!botActive) return undefined;
@@ -859,10 +905,7 @@ function reconcilePremoves(nextFen, newMoves) {
   ]);
 
   useEffect(() => {
-    if (
-      !promotionChoice ||
-      !boardFrameRef.current
-    ) {
+    if ( !promotionChoice || !boardFrameRef.current ) {
       return undefined;
     }
 
@@ -880,11 +923,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setPromotionPopupStyle({
       left:
-        squareRect.left +
-        squareRect.width / 2,
+        squareRect.left + squareRect.width / 2,
       top:
-        squareRect.top +
-        squareRect.height / 2,
+        squareRect.top + squareRect.height / 2,
     });
 
     return undefined;
@@ -1318,6 +1359,7 @@ function reconcilePremoves(nextFen, newMoves) {
       });
   }
   function resetForNewGame() {
+    botSearchControllerRef.current?.abort();
     clearPremoves();
 
     const newGame = new Chess();
@@ -1435,6 +1477,7 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePlayBot() {
+    botSearchControllerRef.current?.abort();
     clearPremoves();
 
     const newGame = new Chess();
@@ -1478,7 +1521,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setClaimWinInSeconds(null);
     setClaimPending(false);
 
-    setGameStatus('Playing vs Bot (1000)');
+    setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
     setRightRailView('game');
   }
 
@@ -2417,6 +2460,9 @@ function reconcilePremoves(nextFen, newMoves) {
           matchmaking={matchmaking}
           gameId={gameId}
           botActive={botActive}
+          botStrength={botStrength}
+          onBotStrengthChange={setBotStrength}
+          botThinking={botThinking}
           playerColor={playerColor}
           gameStatus={gameStatus}
           onPlayBot={handlePlayBot}
