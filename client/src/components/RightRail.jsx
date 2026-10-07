@@ -27,7 +27,6 @@ export default function RightRail({
   botActive,
   botStrength = 1000,
   onBotStrengthChange,
-  botThinking = false,
   playerColor,
   gameStatus,
   onPlayBot,
@@ -189,7 +188,6 @@ export default function RightRail({
             <>
               <p>Estimated strength: ~{botStrength}</p>
               <p>You play: {playerColor === 'w' ? 'White' : 'Black'}</p>
-              {botThinking && <p role="status">Bot thinking...</p>}
             </>
           ) : (
             <p>{gameStatus || 'No bot game in progress.'}</p>

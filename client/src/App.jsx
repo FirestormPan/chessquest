@@ -35,7 +35,7 @@ function getPromotionLabel(pieceType) {
 function App() {
   const socketRef = useRef(null);
 
-  const initialFenRef = useRef(null);
+  const gameStartFenRef  = useRef(null);
   const fenRef = useRef(new Chess().fen());
 
   const uciHistoryRef = useRef([]);
@@ -137,7 +137,6 @@ function App() {
 
   const [botActive, setBotActive] = useState(false);
   const [botStrength, setBotStrength] = useState(1000);
-  const [botThinking, setBotThinking] = useState(false);
 
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
@@ -175,11 +174,11 @@ function App() {
 
   const reviewFen = useMemo(() => {
     if (reviewPly == null) return null;
-    if (!initialFenRef.current) return null;
+    if (!gameStartFenRef .current) return null;
 
     try {
       return applyMoves(
-        initialFenRef.current,
+        gameStartFenRef .current,
         uciHistory.slice(0, reviewPly),
       );
     } catch {
@@ -189,7 +188,7 @@ function App() {
 
   const boardFen = reviewFen ?? displayFen;
 
-  const game = useMemo(() => new Chess(boardFen), [boardFen]);
+  const displayGame  = useMemo(() => new Chess(boardFen), [boardFen]);
 
 
   const capabilities = useMemo(() => getCapabilities(gameMode), [gameMode]);
@@ -359,7 +358,7 @@ function App() {
       setArrows([]);
     }
 
-    const baseFen = initialFenRef.current;
+    const baseFen = gameStartFenRef .current;
 
     const lastUciMove = uciMoves[uciMoves.length - 1];
 
@@ -412,7 +411,7 @@ function App() {
   }
 
 function selectSquare(square) {
-  const piece = game.get(square);
+  const piece = displayGame.get(square);
 
   if (!piece) {
     clearSelection();
@@ -679,7 +678,6 @@ function reconcilePremoves(nextFen, newMoves) {
     const requestFen = fenRef.current;
     const controller = new AbortController();
     botSearchControllerRef.current = controller;
-    setBotThinking(true);
 
     const timer = window.setTimeout(async () => {
       try {
@@ -717,7 +715,7 @@ function reconcilePremoves(nextFen, newMoves) {
       } finally {
         if (botSearchControllerRef.current === controller) {
           botSearchControllerRef.current = null;
-          setBotThinking(false);
+
         }
       }
     }, 400);
@@ -727,7 +725,6 @@ function reconcilePremoves(nextFen, newMoves) {
       controller.abort();
       if (botSearchControllerRef.current === controller) {
         botSearchControllerRef.current = null;
-        setBotThinking(false);
       }
     };
   }, [fen, gameMode, botActive, botStrength]);
@@ -1101,7 +1098,7 @@ function reconcilePremoves(nextFen, newMoves) {
             ? 'w'
             : 'b';
 
-        initialFenRef.current = event.initialFen;
+        gameStartFenRef .current = event.initialFen;
 
         const nextFen = applyMoves(
           event.initialFen,
@@ -1170,10 +1167,10 @@ function reconcilePremoves(nextFen, newMoves) {
 
             if (
         event.type === 'gameState' &&
-        initialFenRef.current
+        gameStartFenRef .current
       ) {
         const nextFen = applyMoves(
-          initialFenRef.current,
+          gameStartFenRef .current,
           event.moves,
         );
 
@@ -1318,7 +1315,7 @@ function reconcilePremoves(nextFen, newMoves) {
     };
   }, [account]);
 
-  function handlePlay() {
+  function handleOnlinePlay() {
     if (
       !socketReady ||
       socketRef.current?.readyState !== WebSocket.OPEN
@@ -1368,7 +1365,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setCapturedPieces({ w: [], b: [] });
     setClockSnapshot(null);
 
-    initialFenRef.current = null;
+    gameStartFenRef .current = null;
     playerColorRef.current = null;
     gameIdRef.current = null;
     moveCountRef.current = 0;
@@ -1455,7 +1452,7 @@ function reconcilePremoves(nextFen, newMoves) {
       clearPremoves();
 
       gameIdRef.current = null;
-      initialFenRef.current = null;
+      gameStartFenRef .current = null;
       playerColorRef.current = null;
 
       setGameId(null);
@@ -1485,7 +1482,7 @@ function reconcilePremoves(nextFen, newMoves) {
     fenRef.current = startFen;
     setFen(startFen);
 
-    initialFenRef.current = startFen;
+    gameStartFenRef .current = startFen;
     playerColorRef.current = 'w';
     gameIdRef.current = null;
     moveCountRef.current = 0;
@@ -1678,7 +1675,7 @@ function reconcilePremoves(nextFen, newMoves) {
         return;
       }
 
-      const sent = sendOnlineMove(
+      const sent = trySendOnlineMove(
         from,
         to,
         promotion,
@@ -1716,8 +1713,8 @@ function reconcilePremoves(nextFen, newMoves) {
        * no server-provided initial FEN. Set it lazily on the
        * first move so commitPosition has a base to replay from.
        */
-      if (!initialFenRef.current) {
-        initialFenRef.current = currentFen;
+      if (!gameStartFenRef .current) {
+        gameStartFenRef .current = currentFen;
       }
 
       const uci =
@@ -1818,7 +1815,7 @@ function reconcilePremoves(nextFen, newMoves) {
     const simulated = applyPremove(currentFen, move, color, false);
     if (!simulated) { clearPremoves(); return; }
 
-    const sent = sendOnlineMove(
+    const sent = trySendOnlineMove(
       move.from,
       move.to,
       move.promotion ?? '',
@@ -1832,7 +1829,7 @@ function reconcilePremoves(nextFen, newMoves) {
   function queueOrPromptPremove(from, to) {
     if (!premovesEnabled) return;
 
-    const piece = game.get(from);
+    const piece = displayGame.get(from);
     if (!piece) return;
 
     const needsPromotion =
@@ -1875,7 +1872,7 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    const piece = game.get(square);
+    const piece = displayGame.get(square);
 
     const color = capabilities.assignedColor
       ? playerColorRef.current
@@ -2137,7 +2134,7 @@ function reconcilePremoves(nextFen, newMoves) {
     }
   }
 
-  function sendOnlineMove(
+  function trySendOnlineMove(
     from,
     to,
     promotion = '',
@@ -2367,7 +2364,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
               <div className="board-column">
                 <ChessBoard
-                  game={game}
+                  game={displayGame}
                   boardFiles={boardFiles}
                   boardRanks={boardRanks}
                   selectedSquare={selectedSquare}
@@ -2460,7 +2457,6 @@ function reconcilePremoves(nextFen, newMoves) {
           botActive={botActive}
           botStrength={botStrength}
           onBotStrengthChange={setBotStrength}
-          botThinking={botThinking}
           playerColor={playerColor}
           gameStatus={gameStatus}
           onPlayBot={handlePlayBot}
@@ -2474,7 +2470,7 @@ function reconcilePremoves(nextFen, newMoves) {
           cancellingMatchmaking={cancellingMatchmaking}
           premovesEnabled={premovesEnabled}
           onTogglePremoves={setPremovesEnabled}
-          onPlay={handlePlay}
+          onPlay={handleOnlinePlay}
           onCancel={handleCancel}
           drawOffer={drawOffer}
           drawPending={drawPending}
