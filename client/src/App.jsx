@@ -2336,15 +2336,9 @@ function reconcilePremoves(nextFen, newMoves) {
                   }}
                 >
                   <PieceVisual
-                    color={
-                      pointerDrag.piece.color
-                    }
-                    type={
-                      pointerDrag.piece.type
-                    }
-                    skinFolder={getSkinFolderForColor(
-                      pointerDrag.piece.color,
-                    )}
+                    color={ pointerDrag.piece.color }
+                    type={ pointerDrag.piece.type }
+                    skinFolder={getSkinFolderForColor(pointerDrag.piece.color)}
                   />
                 </div>
               )}

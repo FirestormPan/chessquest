@@ -1,3 +1,8 @@
+## test
 - offering/accepting draws probably not working
-- chat is showing my messages but I never recieved one from opponents and when I refresh the page mine disappear too
-- dragging a piece doesnt show the piece being grabbed
+
+
+## implement
+- Optimistic move animation for online moves — makes the board feel responsive.
+- Add move sounds 
+
