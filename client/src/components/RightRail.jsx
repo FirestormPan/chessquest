@@ -75,7 +75,7 @@ export default function RightRail({
   canStepForward,
   isReviewing,
 }) {
-  if (view === 'hello') {
+  if (view === 'select-skin') {
     return (
       <div className="skin-picker" aria-label="Choose a piece skin">
         <div className="skin-picker-heading">

@@ -560,8 +560,8 @@ function reconcilePremoves(nextFen, newMoves) {
       botSearchControllerRef.current?.abort();
       botGameEndedRef.current = true;
       setGameStatus('You resigned.');
-      setBotActive(false);
-      setGameMode(GAME_MODE.LOCAL);
+
+      resetForNewGame();
 
       window.setTimeout(() => {
         window.alert('You resigned. Bot wins.');
@@ -760,8 +760,7 @@ function reconcilePremoves(nextFen, newMoves) {
     }, 0);
 
     setGameStatus(message);
-    setBotActive(false);
-    setGameMode(GAME_MODE.LOCAL);
+    resetForNewGame();
 
     return undefined;
   }, [fen, gameMode, botActive]);
@@ -2242,7 +2241,7 @@ function reconcilePremoves(nextFen, newMoves) {
             className="account-button secondary"
             type="button"
             onClick={() =>
-              setRightRailView('hello')
+              setRightRailView('select-skin')
             }
           >
             Select Skin
@@ -2251,9 +2250,8 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            onClick={() =>
-              setRightRailView('game')
-            }
+            disabled={botActive}
+            onClick={() => setRightRailView('game')}
           >
             Game and chat
           </button>
