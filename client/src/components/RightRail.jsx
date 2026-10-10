@@ -244,11 +244,16 @@ export default function RightRail({
             getSkinFolderForColor={getSkinFolderForColor}
           />
         )
+      ) : matchmaking ? (
+        <div className="matchmaking-panel" aria-live="polite">
+          <span className="chat-kicker">Matchmaking</span>
+          <h2>Searching for a worthy opponent…</h2>
+          <p>Use Cancel to stop the search.</p>
+        </div>
       ) : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}
-          disabled={matchmaking || Boolean(gameId)}
         />
       )}
 

@@ -1430,6 +1430,7 @@ function reconcilePremoves(nextFen, newMoves) {
       setMatchmaking(false);
       setGameStatus('Game search cancelled');
     } catch (error) {
+      setMatchmaking(false);
       setGameStatus(error.message);
     } finally {
       setCancellingMatchmaking(false);
@@ -2250,7 +2251,7 @@ function reconcilePremoves(nextFen, newMoves) {
             disabled={botActive}
             onClick={() => setRightRailView('game')}
           >
-            Game and chat
+            VS Player
           </button>
 
           <button
