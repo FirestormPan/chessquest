@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Chess } from 'chess.js';
-import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition, truncateUciMoves}   from './boardRules';
+import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition,}   from './boardRules';
 import { GAME_MODE, GAME_PHASE, getCapabilities, canPlayerMove } from './gameMode';
 import {  TIME_CONTROL_CATEGORIES,  isRatedAllowed,} from './timeControls';
 import PieceVisual from './components/PieceVisual';
@@ -168,6 +168,7 @@ function App() {
   const [botActive, setBotActive] = useState(false);
   const [botStrength, setBotStrength] = useState(1000);
   const [botPlayerColor, setBotPlayerColor] = useState('w');
+  const [botColorMode, setBotColorMode] = useState('w');
 
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
@@ -319,6 +320,17 @@ function App() {
     if (selectedOpponentSkinFolder === folder) return;
 
     setSelectedSkinFolder(folder);
+  }
+
+  function handleBotColorModeChange(mode) {
+    setBotColorMode(mode);
+
+    if (mode === 'random') {
+      setBotPlayerColor(Math.random() < 0.5 ? 'w' : 'b');
+      return;
+    }
+
+    setBotPlayerColor(mode);
   }
 
   function clearSelection() {
@@ -991,7 +1003,7 @@ function reconcilePremoves(nextFen, newMoves) {
     boardRanks,
   ]);
 
-    useEffect(() => {
+  useEffect(() => {
     if (!account) {
       setSocketReady(false);
       return undefined;
@@ -1013,9 +1025,27 @@ function reconcilePremoves(nextFen, newMoves) {
 
       setSocketReady(true);
       setGameStatus('Connected to game server');
+
+      const activeGame = localStorage.getItem('chessquest:active-game');
+        if (activeGame) {
+          socket.send(JSON.stringify({ type: 'game.resume' }));
+        }
     };
 
-    function handleServerMessage(payload) {
+    socket.onmessage = (message) => {
+      if (socketRef.current !== socket) return;
+
+      let payload;
+
+      try {
+        payload = JSON.parse(message.data);
+      } catch {
+        setGameStatus(
+          'Received an invalid message from the game server',
+        );
+        return;
+      }
+
       if (payload.type === 'game.found') {
         matchmakingAttemptRef.current = null;
         matchmakingAbortControllerRef.current = null;
@@ -1158,6 +1188,8 @@ function reconcilePremoves(nextFen, newMoves) {
 
         gameStartFenRef .current = event.initialFen;
 
+        localStorage.setItem('chessquest:active-game', event.id);
+
         const nextFen = applyMoves(
           event.initialFen,
           event.state.moves,
@@ -1219,10 +1251,39 @@ function reconcilePremoves(nextFen, newMoves) {
           updatedAt: Date.now(),
         });
 
+        if (event.state.status !== 'started') {
+          const result = describeGameResult(
+            { winner: undefined, status: event.state.status },
+            { playerColor: color },
+          );
+
+          setChatMessages((current) => [
+            ...current,
+            { room: 'system', username: '', text: result },
+          ]);
+
+          setGameStatus(result);
+
+          localStorage.removeItem('chessquest:active-game');
+
+          gameIdRef.current = null;
+          setGameId(null);
+
+          moveCountRef.current = 0;
+
+          setGameMode(GAME_MODE.LOCAL);
+
+          setArrows([]);
+          clearSelection();
+          clearPremoves();
+        }
+
+        return;
+
         return;
       }
 
-      if (
+        if (
         event.type === 'gameState' &&
         gameStartFenRef .current
       ) {
@@ -1319,6 +1380,7 @@ function reconcilePremoves(nextFen, newMoves) {
         }));
 
         if (gameEnded) {
+
           const result = describeGameResult(event, {
             playerColor: playerColorRef.current,
           });
@@ -1332,7 +1394,10 @@ function reconcilePremoves(nextFen, newMoves) {
             },
           ]);
 
+
           setGameStatus(result);
+
+          localStorage.removeItem('chessquest:active-game');
 
           setOpponentGone(false);
           setClaimWinInSeconds(null);
@@ -1349,28 +1414,6 @@ function reconcilePremoves(nextFen, newMoves) {
           clearSelection();
           clearPremoves();
         }
-      }
-    }
-
-    socket.onmessage = (message) => {
-      if (socketRef.current !== socket) return;
-
-      let payload;
-
-      try {
-        payload = JSON.parse(message.data);
-      } catch {
-        setGameStatus(
-          'Received an invalid message from the game server',
-        );
-        return;
-      }
-
-      try {
-        handleServerMessage(payload);
-      } catch (error) {
-        console.error('Unhandled server message error:', error);
-        setGameStatus('Unexpected error processing server message');
       }
     };
 
@@ -1485,6 +1528,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setBotActive(false);
 
     drawPendingRef.current = false;
+    localStorage.removeItem('chessquest:active-game');
 
     setGameId(null);
     setGameRated(false);
@@ -1605,6 +1649,13 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   function handlePlayBot() {
+    const humanColor =
+      botColorMode === 'random'
+        ? (Math.random() < 0.5 ? 'w' : 'b')
+        : botPlayerColor;
+
+    setBotPlayerColor(humanColor);
+
     botSearchControllerRef.current?.abort();
     clearPremoves();
 
@@ -1615,7 +1666,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setFen(startFen);
 
     gameStartFenRef .current = startFen;
-    playerColorRef.current = botPlayerColor;
+    playerColorRef.current = 'w';
     gameIdRef.current = null;
     moveCountRef.current = 0;
     drawPendingRef.current = false;
@@ -1623,7 +1674,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setGameId(null);
     setGameMode(GAME_MODE.BOT);
-    setPlayerColor(botPlayerColor);
+    setPlayerColor('w');
     setBotActive(true);
 
     setCapturedPieces({ w: [], b: [] });
@@ -1651,44 +1702,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
     setRightRailView('game');
-  }
-
-  function handleBotTakeback() {
-    if (gameMode !== GAME_MODE.BOT) return;
-    if (!botActive) return;
-
-    const currentGame = new Chess(fenRef.current);
-    if (currentGame.isGameOver()) return;
-
-    const moves = uciHistoryRef.current;
-    if (moves.length === 0) return;
-
-    const humanColor = playerColorRef.current;
-    if (!humanColor) return;
-
-    /*
-    * Remove one ply if it's the bot's turn (the bot hasn't
-    * replied yet), or two plies if it's the human's turn
-    * (the bot already moved). Either way the result is a
-    * position where the human is to move.
-    */
-    const botColor = humanColor === 'w' ? 'b' : 'w';
-    const pliesToRemove =
-      currentGame.turn() === botColor ? 1 : 2;
-
-    if (moves.length < pliesToRemove) return;
-
-    botSearchControllerRef.current?.abort();
-
-    const truncated = truncateUciMoves(moves, pliesToRemove);
-    const nextFen = applyMoves(gameStartFenRef.current, truncated);
-
-    commitPosition(nextFen, {
-      uciMoves: truncated,
-      clearArrows: true,
-    });
-
-    setGameStatus('Takeback');
   }
 
   function handleSquareClick(square) {
@@ -2620,15 +2633,9 @@ function reconcilePremoves(nextFen, newMoves) {
           botActive={botActive}
           botStrength={botStrength}
           onBotStrengthChange={setBotStrength}
-          onBotTakeback={handleBotTakeback}
-          canBotTakeback={
-            botActive && uciHistory.length > (playerColor === 'b' ? 1 : 0)
-          }
-          onPlayBot={handlePlayBot}
-          botPlayerColor={botPlayerColor}
-          onBotPlayerColorChange={setBotPlayerColor}
           playerColor={playerColor}
           gameStatus={gameStatus}
+          onPlayBot={handlePlayBot}
           skinFolders={skinFolders}
           selectedSkinFolder={selectedSkinFolder}
           selectedOpponentSkinFolder={selectedOpponentSkinFolder}
@@ -2652,6 +2659,9 @@ function reconcilePremoves(nextFen, newMoves) {
           moveHistory={moveHistory}
           reviewPly={reviewPly}
           onSelectPly={setReviewPly}
+           botPlayerColor={botPlayerColor}
+          botColorMode={botColorMode}
+          onBotColorModeChange={handleBotColorModeChange}
           chatMessages={chatMessages}
           chatText={chatText}
           chatError={chatError}
@@ -2674,22 +2684,9 @@ function reconcilePremoves(nextFen, newMoves) {
           takebackPending={takebackPending}
           gameRated={gameRated}
           onTakeback={handleTakeback}
-
         />
       </aside>
-      <footer className="app-footer">
-        <p>
-          Board API powered by{' '}
-          <a href="https://lichess.org" target="_blank" rel="noreferrer">
-            Lichess
-          </a>
-        </p>
-        <p>
-          <a href="mailto:you@example.com">Report a bug</a>
-        </p>
-      </footer>
     </main>
-    
   );
 }
 

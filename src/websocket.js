@@ -16,6 +16,7 @@ import {
 const MAX_BUFFERED_SOCKET_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 15_000;
 
+
 function send(socket, message) {
   if (socket.readyState !== WebSocket.OPEN) return;
   if (socket.bufferedAmount > MAX_BUFFERED_SOCKET_BYTES) {
@@ -69,8 +70,8 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     const abortController = new AbortController();
     let gameId = null;
     let gameStreamController = null;
-    let receivedMoveCount = 0;
     let awaitingMatchAttemptId = null;
+    let resumable = false;
     let commandQueue = Promise.resolve();
     let commandWindowStartedAt = Date.now();
     let commandCount = 0;
@@ -88,38 +89,56 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
           });
         }
       }
-        
-      if (event.type !== 'gameStart' || gameId || !awaitingMatchAttemptId) return;
+
+      if (event.type !== 'gameStart' || gameId) return;
+
+      const isSolicited = Boolean(awaitingMatchAttemptId);
+      const isResume = resumable && !isSolicited;
+
+      if (!isSolicited && !isResume) return;
+
       const nextGameId = event.game?.gameId ?? event.game?.id;
       if (!nextGameId) {
-        send(socket, { type: 'error', scope: 'matchmaking', message: 'Lichess game event did not include a game ID' });
+        send(socket, {
+          type: 'error',
+          scope: 'matchmaking',
+          message: 'Lichess game event did not include a game ID',
+        });
         return;
       }
-      if (!claimLichessSeek(sessionKey, awaitingMatchAttemptId)) {
+
+      if (isSolicited && !claimLichessSeek(sessionKey, awaitingMatchAttemptId)) {
         awaitingMatchAttemptId = null;
         return;
       }
 
-      gameId = nextGameId;
       awaitingMatchAttemptId = null;
+      resumable = false;
+      gameId = nextGameId;
       send(socket, { type: 'game.found', gameId });
+
       gameStreamController = new AbortController();
       startLichessGameStream(accessToken, gameId, (gameEvent) => {
         if (gameEvent.type === 'gameFull') {
-          receivedMoveCount = gameEvent.state.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+          receivedMoveCount =
+            gameEvent.state.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0;
         }
         send(socket, { type: 'game.event', event: gameEvent });
-        if (gameEvent.type === 'gameState' && gameEvent.status !== 'started') {
-          gameStreamController?.abort();
-          gameStreamController = null;
-          gameId = null;
-          receivedMoveCount = 0;
-        }
+       if (gameEvent.type === 'gameState' && gameEvent.status !== 'started') {
+        gameStreamController?.abort();
+        gameStreamController = null;
+        gameId = null;
+        receivedMoveCount = 0;
+      }
       }, gameStreamController.signal).catch((error) => {
-        if (error.name !== 'AbortError') send(socket, { type: 'error', message: error.message });
+        if (error.name !== 'AbortError') {
+          send(socket, { type: 'error', message: error.message });
+        }
       });
     }, abortController.signal).catch((error) => {
-      if (error.name !== 'AbortError') send(socket, { type: 'error', message: error.message });
+      if (error.name !== 'AbortError') {
+        send(socket, { type: 'error', message: error.message });
+      }
     });
 
     socket.on('message', (rawMessage) => {
@@ -134,231 +153,250 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       }
 
       commandQueue = commandQueue.then(async () => {
-      const commandController = new AbortController();
-      const commandTimeout = setTimeout(
-        () => commandController.abort(),
-        COMMAND_TIMEOUT_MS,
-      );
-      commandTimeout.unref?.();
-      let message;
-
-      try {
-        message = JSON.parse(rawMessage.toString());
-
-        if (message.type === 'matchmaking.start') {
-          if (typeof message.attemptId !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(message.attemptId)) {
-            send(socket, { type: 'error', scope: 'matchmaking', message: 'Invalid matchmaking attempt' });
-            return;
-          }
-          awaitingMatchAttemptId = gameId ? null : message.attemptId;
-          return;
-        }
-
-        if (message.type === 'matchmaking.cancel') {
-          if (message.attemptId === awaitingMatchAttemptId) {
-            cancelLichessSeek(sessionKey, message.attemptId);
-            awaitingMatchAttemptId = null;
-          }
-          return;
-        }
-
-        if (message.type === 'game.resign') {
-          if (message.gameId !== gameId) {
-            send(socket, { type: 'error', message: 'Invalid game ID' });
-            return;
-          }
-
-          const resignResponse = await resignLichessGame(
-            accessToken,
-            gameId,
-            commandController.signal,
-          );
-          if (!resignResponse.ok) {
-            send(socket, {
-              type: 'error',
-              message: `Lichess rejected resignation: ${await responseError(resignResponse)}`,
-            });
-          }
-          return;
-        }
-        if (message.type === 'game.takeback') {
-          if (
-            message.gameId !== gameId ||
-            !['offer', 'accept', 'decline'].includes(message.action)
-          ) {
-            send(socket, { type: 'error', message: 'Invalid takeback request' });
-            return;
-          }
-
-          const takebackResponse = await handleLichessTakeback(
-            accessToken,
-            gameId,
-            message.action,
-            commandController.signal,
-          );
-
-          send(socket, {
-            type: 'game.takeback.result',
-            ok: takebackResponse.ok,
-            action: message.action,
-            message: takebackResponse.ok
-              ? undefined
-              : `Lichess rejected the takeback: ${await responseError(takebackResponse)}`,
-          });
-
-          if (!takebackResponse.ok) {
-            send(socket, {
-              type: 'error',
-              scope: 'takeback',
-              message: 'Takeback request was rejected',
-            });
-          }
-          return;
-        }
-
-        if (message.type === 'game.draw') {
-          if (message.gameId !== gameId || typeof message.accept !== 'boolean') {
-            send(socket, { type: 'error', message: 'Invalid draw request' });
-            return;
-          }
-
-          const drawResponse = await handleLichessDraw(
-            accessToken,
-            gameId,
-            message.accept,
-            commandController.signal,
-          );
-          send(socket, {
-            type: 'game.draw.result',
-            ok: drawResponse.ok,
-            accept: message.accept,
-            message: drawResponse.ok
-              ? undefined
-              : `Lichess rejected the draw request: ${await responseError(drawResponse)}`,
-          });
-          if (!drawResponse.ok) {
-            send(socket, {
-              type: 'error',
-              message: 'Draw request was rejected',
-            });
-          }
-          return;
-        }
-
-        if (message.type === 'game.claimVictory') {
-          if (message.gameId !== gameId) {
-            send(socket, { type: 'error', message: 'Invalid game ID' });
-            return;
-          }
-
-          const claimResponse = await claimLichessVictory(
-            accessToken,
-            gameId,
-            commandController.signal,
-          );
-          send(socket, {
-            type: 'game.claimVictory.result',
-            ok: claimResponse.ok,
-            message: claimResponse.ok
-              ? undefined
-              : `Lichess rejected the claim: ${await responseError(claimResponse)}`,
-          });
-          return;
-        }
-
-        if (message.type === 'game.chat') {
-          if (
-            message.gameId !== gameId
-            || !['player', 'spectator'].includes(message.room)
-            || typeof message.text !== 'string'
-            || !message.text.trim()
-            || message.text.length > 140
-          ) {
-            send(socket, { type: 'error', scope: 'chat', message: 'Invalid chat message' });
-            return;
-          }
-
-          const chatResponse = await sendLichessChat(
-            accessToken,
-            gameId,
-            message.room,
-            message.text.trim(),
-            commandController.signal,
-          );
-          if (chatResponse.ok) {
-            send(socket, {
-              type: 'game.chat.sent',
-              room: message.room,
-              text: message.text.trim(),
-            });
-          } else {
-            send(socket, {
-              type: 'error',
-              scope: 'chat',
-              message: `Lichess rejected the chat message: ${await responseError(chatResponse)}`,
-            });
-          }
-          return;
-        }
-
-        if (message.type !== 'game.move' || message.gameId !== gameId || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(message.uci)) {
-          send(socket, { type: 'error', scope: 'game.move', message: 'Invalid game move' });
-          return;
-        }
-
-        const moveResponse = await sendLichessMove(
-          accessToken,
-          gameId,
-          message.uci,
-          commandController.signal,
+        const commandController = new AbortController();
+        const commandTimeout = setTimeout(
+          () => commandController.abort(),
+          COMMAND_TIMEOUT_MS,
         );
+        commandTimeout.unref?.();
+        let message;
 
-        if (!moveResponse.ok) {
-          send(socket, {
-            type: 'error',
-            scope: 'game.move',
-            message: `Lichess rejected the move: ${await responseError(moveResponse)}`,
-          });
-        }
-      } catch {
-        if (commandController.signal.aborted) {
-          if (message?.type === 'game.takeback') {
+        try {
+          message = JSON.parse(rawMessage.toString());
+
+          if (message.type === 'matchmaking.start') {
+            if (
+              typeof message.attemptId !== 'string' ||
+              !/^[a-zA-Z0-9_-]{16,128}$/.test(message.attemptId)
+            ) {
+              send(socket, {
+                type: 'error',
+                scope: 'matchmaking',
+                message: 'Invalid matchmaking attempt',
+              });
+              return;
+            }
+            awaitingMatchAttemptId = gameId ? null : message.attemptId;
+            return;
+          }
+
+          if (message.type === 'matchmaking.cancel') {
+            if (message.attemptId === awaitingMatchAttemptId) {
+              cancelLichessSeek(sessionKey, message.attemptId);
+              awaitingMatchAttemptId = null;
+            }
+            return;
+          }
+          if (message.type === 'game.resume') {
+            if (!gameId && !awaitingMatchAttemptId) {
+              resumable = true;
+            }
+            return;
+          }
+
+          if (message.type === 'game.resign') {
+            if (message.gameId !== gameId) {
+              send(socket, { type: 'error', message: 'Invalid game ID' });
+              return;
+            }
+
+            const resignResponse = await resignLichessGame(
+              accessToken,
+              gameId,
+              commandController.signal,
+            );
+            if (!resignResponse.ok) {
+              send(socket, {
+                type: 'error',
+                message: `Lichess rejected resignation: ${await responseError(resignResponse)}`,
+              });
+            }
+            return;
+          }
+
+          if (message.type === 'game.takeback') {
+            if (
+              message.gameId !== gameId ||
+              !['offer', 'accept', 'decline'].includes(message.action)
+            ) {
+              send(socket, { type: 'error', message: 'Invalid takeback request' });
+              return;
+            }
+
+            const takebackResponse = await handleLichessTakeback(
+              accessToken,
+              gameId,
+              message.action,
+              commandController.signal,
+            );
+
             send(socket, {
               type: 'game.takeback.result',
-              ok: false,
+              ok: takebackResponse.ok,
               action: message.action,
-              message: 'Lichess request timed out',
+              message: takebackResponse.ok
+                ? undefined
+                : `Lichess rejected the takeback: ${await responseError(takebackResponse)}`,
             });
-          } else if (message?.type === 'game.draw') {
+
+            if (!takebackResponse.ok) {
+              send(socket, {
+                type: 'error',
+                scope: 'takeback',
+                message: 'Takeback request was rejected',
+              });
+            }
+            return;
+          }
+
+          if (message.type === 'game.draw') {
+            if (message.gameId !== gameId || typeof message.accept !== 'boolean') {
+              send(socket, { type: 'error', message: 'Invalid draw request' });
+              return;
+            }
+
+            const drawResponse = await handleLichessDraw(
+              accessToken,
+              gameId,
+              message.accept,
+              commandController.signal,
+            );
             send(socket, {
               type: 'game.draw.result',
-              ok: false,
+              ok: drawResponse.ok,
               accept: message.accept,
-              message: 'Lichess request timed out',
+              message: drawResponse.ok
+                ? undefined
+                : `Lichess rejected the draw request: ${await responseError(drawResponse)}`,
             });
-          } else if (message?.type === 'game.claimVictory') {
+            if (!drawResponse.ok) {
+              send(socket, {
+                type: 'error',
+                message: 'Draw request was rejected',
+              });
+            }
+            return;
+          }
+
+          if (message.type === 'game.claimVictory') {
+            if (message.gameId !== gameId) {
+              send(socket, { type: 'error', message: 'Invalid game ID' });
+              return;
+            }
+
+            const claimResponse = await claimLichessVictory(
+              accessToken,
+              gameId,
+              commandController.signal,
+            );
             send(socket, {
               type: 'game.claimVictory.result',
-              ok: false,
-              message: 'Lichess request timed out',
+              ok: claimResponse.ok,
+              message: claimResponse.ok
+                ? undefined
+                : `Lichess rejected the claim: ${await responseError(claimResponse)}`,
             });
-          } else {
+            return;
+          }
+
+          if (message.type === 'game.chat') {
+            if (
+              message.gameId !== gameId ||
+              !['player', 'spectator'].includes(message.room) ||
+              typeof message.text !== 'string' ||
+              !message.text.trim() ||
+              message.text.length > 140
+            ) {
+              send(socket, { type: 'error', scope: 'chat', message: 'Invalid chat message' });
+              return;
+            }
+
+            const chatResponse = await sendLichessChat(
+              accessToken,
+              gameId,
+              message.room,
+              message.text.trim(),
+              commandController.signal,
+            );
+            if (chatResponse.ok) {
+              send(socket, {
+                type: 'game.chat.sent',
+                room: message.room,
+                text: message.text.trim(),
+              });
+            } else {
+              send(socket, {
+                type: 'error',
+                scope: 'chat',
+                message: `Lichess rejected the chat message: ${await responseError(chatResponse)}`,
+              });
+            }
+            return;
+          }
+
+          if (
+            message.type !== 'game.move' ||
+            message.gameId !== gameId ||
+            !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(message.uci)
+          ) {
+            send(socket, { type: 'error', scope: 'game.move', message: 'Invalid game move' });
+            return;
+          }
+
+          const moveResponse = await sendLichessMove(
+            accessToken,
+            gameId,
+            message.uci,
+            commandController.signal,
+          );
+
+          if (!moveResponse.ok) {
             send(socket, {
               type: 'error',
-              scope: message?.type === 'game.move'
-                ? 'game.move'
-                : message?.type === 'game.chat'
-                  ? 'chat'
-                  : undefined,
-              message: 'Lichess request timed out',
+              scope: 'game.move',
+              message: `Lichess rejected the move: ${await responseError(moveResponse)}`,
             });
           }
-        } else {
-          send(socket, { type: 'error', message: 'Invalid message' });
+        } catch {
+          if (commandController.signal.aborted) {
+            if (message?.type === 'game.takeback') {
+              send(socket, {
+                type: 'game.takeback.result',
+                ok: false,
+                action: message.action,
+                message: 'Lichess request timed out',
+              });
+            } else if (message?.type === 'game.draw') {
+              send(socket, {
+                type: 'game.draw.result',
+                ok: false,
+                accept: message.accept,
+                message: 'Lichess request timed out',
+              });
+            } else if (message?.type === 'game.claimVictory') {
+              send(socket, {
+                type: 'game.claimVictory.result',
+                ok: false,
+                message: 'Lichess request timed out',
+              });
+            } else {
+              send(socket, {
+                type: 'error',
+                scope:
+                  message?.type === 'game.move'
+                    ? 'game.move'
+                    : message?.type === 'game.chat'
+                      ? 'chat'
+                      : undefined,
+                message: 'Lichess request timed out',
+              });
+            }
+          } else {
+            send(socket, { type: 'error', message: 'Invalid message' });
+          }
+        } finally {
+          clearTimeout(commandTimeout);
         }
-      } finally {
-        clearTimeout(commandTimeout);
-      }
       }).catch(() => {
         send(socket, { type: 'error', message: 'Unable to process game command' });
       });

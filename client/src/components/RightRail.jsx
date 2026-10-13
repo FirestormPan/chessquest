@@ -28,10 +28,9 @@ export default function RightRail({
   botActive,
   botStrength = 1000,
   onBotStrengthChange,
-  botPlayerColor = 'w',
-  onBotPlayerColorChange,
-  onBotTakeback,
-  canBotTakeback,
+  botPlayerColor,
+  botColorMode = 'w',
+  onBotColorModeChange,
   playerColor,
   gameStatus,
   onPlayBot,
@@ -59,10 +58,6 @@ export default function RightRail({
   claimPending,
   claimWinInSeconds,
   onClaimVictory,
-  takebackOffer,
-  takebackPending,
-  gameRated,
-  onTakeback,
 
   // chat / history
   moveHistory,
@@ -83,7 +78,7 @@ export default function RightRail({
   canStepForward,
   isReviewing,
 }) {
-  if (view === 'select-skin') {
+  if (view === 'hello') {
     return (
       <div className="skin-picker" aria-label="Choose a piece skin">
         <div className="skin-picker-heading">
@@ -142,7 +137,7 @@ export default function RightRail({
     );
   }
 
-    if (view === 'bot') {
+  if (view === 'bot') {
     return (
       <div className="bot-picker" aria-label="Play vs bot">
         <div className="bot-picker-heading">
@@ -151,59 +146,61 @@ export default function RightRail({
         </div>
 
         <p className="bot-picker-description">
-          Choose a side and an estimated bot strength.
+          Choose an estimated bot strength.
         </p>
 
         <fieldset className="bot-color-picker">
           <legend>Play as</legend>
           <div className="bot-color-options">
             <label
-              className={botPlayerColor === 'w' ? 'is-selected' : ''}
+              className={botColorMode === 'w' ? 'is-selected' : ''}
               aria-label="Play as white"
             >
               <input
                 type="radio"
                 name="bot-color"
                 value="w"
-                checked={botPlayerColor === 'w'}
-                onChange={() => onBotPlayerColorChange('w')}
+                checked={botColorMode === 'w'}
+                onChange={() => onBotColorModeChange('w')}
               />
               <PieceVisual
                 color="w"
                 type="p"
-                skinFolder={getSkinFolderForColor('w')}
                 className="bot-color-piece"
               />
             </label>
 
             <label
-              className={botPlayerColor === 'b' ? 'is-selected' : ''}
+              className={botColorMode === 'b' ? 'is-selected' : ''}
               aria-label="Play as black"
             >
               <input
                 type="radio"
                 name="bot-color"
                 value="b"
-                checked={botPlayerColor === 'b'}
-                onChange={() => onBotPlayerColorChange('b')}
+                checked={botColorMode === 'b'}
+                onChange={() => onBotColorModeChange('b')}
               />
               <PieceVisual
                 color="b"
                 type="p"
-                skinFolder={getSkinFolderForColor('b')}
                 className="bot-color-piece"
               />
             </label>
 
-            <button
-              type="button"
-              className="bot-color-random"
-              onClick={() =>
-                onBotPlayerColorChange(Math.random() < 0.5 ? 'w' : 'b')
-              }
+            <label
+              className={botColorMode === 'random' ? 'is-selected' : ''}
+              aria-label="Play as a random side"
             >
-              Random
-            </button>
+              <input
+                type="radio"
+                name="bot-color"
+                value="random"
+                checked={botColorMode === 'random'}
+                onChange={() => onBotColorModeChange('random')}
+              />
+              <span className="bot-color-random-label">Random</span>
+            </label>
           </div>
         </fieldset>
 
@@ -259,15 +256,6 @@ export default function RightRail({
         {botActive && (
           <div className="game-actions" aria-label="Bot game actions">
             <button
-              className="account-button"
-              type="button"
-              onClick={onBotTakeback}
-              disabled={!canBotTakeback}
-            >
-              Takeback
-            </button>
-
-            <button
               className="account-button danger"
               type="button"
               onClick={onResign}
@@ -288,14 +276,6 @@ export default function RightRail({
             moveHistory={moveHistory}
             reviewPly={reviewPly}
             onSelectPly={onSelectPly}
-            uciHistory={uciHistory}
-            canStepBackward={canStepBackward}
-            canStepForward={canStepForward}
-            onStepBackward={onStepBackward}
-            onStepForward={onStepForward}
-            onReturnLive={onReturnLive}
-            isReviewing={isReviewing}
-            showControls
           />
         </div>
       </>
@@ -315,16 +295,11 @@ export default function RightRail({
             getSkinFolderForColor={getSkinFolderForColor}
           />
         )
-      ) : matchmaking ? (
-        <div className="matchmaking-panel" aria-live="polite">
-          <span className="chat-kicker">Matchmaking</span>
-          <h2>Searching for a worthy opponent…</h2>
-          <p>Use Cancel to stop the search.</p>
-        </div>
       ) : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}
+          disabled={matchmaking || Boolean(gameId)}
         />
       )}
 
@@ -356,10 +331,6 @@ export default function RightRail({
         claimPending={claimPending}
         claimWinInSeconds={claimWinInSeconds}
         onClaimVictory={onClaimVictory}
-        takebackOffer={takebackOffer}
-        takebackPending={takebackPending}
-        gameRated={gameRated}
-        onTakeback={onTakeback}
       />
 
       <div className="chat-panel" aria-label="Game chat and move history">
