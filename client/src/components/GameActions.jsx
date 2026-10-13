@@ -18,6 +18,10 @@ export default function GameActions({
   claimPending,
   claimWinInSeconds,
   onClaimVictory,
+  takebackOffer,
+  takebackPending,
+  gameRated,
+  onTakeback,
 }) {
   return (
     <div className="game-actions" aria-label="Game actions">
@@ -44,23 +48,43 @@ export default function GameActions({
 
       {gameId && (
         <>
-          <button
-            className="account-button"
-            type="button"
-            onClick={onDraw}
-          >
-            {drawOffer
-              ? 'Accept draw'
-              : drawPending
-                ? 'Cancel draw offer'
-                : 'Offer draw'}
+          <button className="account-button" type="button" onClick={onDraw}>
+            {drawOffer ? 'Accept draw' : drawPending ? 'Cancel draw offer' : 'Offer draw'}
           </button>
 
-          <button
-            className="account-button danger"
-            type="button"
-            onClick={onResign}
-          >
+          {!gameRated && (
+            <>
+              {takebackOffer ? (
+                <>
+                  <button
+                    className="account-button"
+                    type="button"
+                    onClick={() => onTakeback('accept')}
+                  >
+                    Accept takeback
+                  </button>
+                  <button
+                    className="account-button secondary"
+                    type="button"
+                    onClick={() => onTakeback('decline')}
+                  >
+                    Decline takeback
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="account-button"
+                  type="button"
+                  onClick={() => onTakeback('offer')}
+                  disabled={takebackPending}
+                >
+                  {takebackPending ? 'Takeback offered' : 'Offer takeback'}
+                </button>
+              )}
+            </>
+          )}
+
+          <button className="account-button danger" type="button" onClick={onResign}>
             Resign
           </button>
 

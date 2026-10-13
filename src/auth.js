@@ -19,15 +19,18 @@ const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
 function loadSessions() {
   try {
-    const savedSessions = JSON.parse(readFileSync(sessionFile, 'utf8'));
-    return new Map(Object.entries(savedSessions));
+    return new Map(Object.entries(JSON.parse(readFileSync(sessionFile, 'utf8'))));
   } catch {
     return new Map();
   }
 }
 
 function saveSessions() {
-  writeFileSync(sessionFile, JSON.stringify(Object.fromEntries(sessions)), { mode: 0o600 });
+  writeFileSync(
+    sessionFile,
+    JSON.stringify(Object.fromEntries(sessions)),
+    { mode: 0o600 },
+  );
 }
 
 function createCodeChallenge(codeVerifier) {
@@ -64,6 +67,10 @@ function getSession(request) {
 
 export function attachLichessAuth(app) {
   app.get('/api/auth/lichess', (_request, response) => {
+    const now = Date.now();
+    for (const [pendingState, authorization] of pendingAuthorizations) {
+      if (authorization.expiresAt < now) pendingAuthorizations.delete(pendingState);
+    }
     const state = randomBytes(32).toString('hex');
     const codeVerifier = randomBytes(32).toString('base64url');
 
@@ -98,8 +105,8 @@ export function attachLichessAuth(app) {
     try {
       const tokenResponse = await fetch(tokenUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
           grant_type: 'authorization_code',
           code: String(code),
           client_id: clientId,
@@ -132,7 +139,11 @@ export function attachLichessAuth(app) {
       saveSessions();
       setSessionCookie(response, sessionId);
       response.redirect(frontendUrl);
-    } catch {
+    } catch (callbackError) {
+      console.error(
+        'Lichess OAuth callback failed:',
+        callbackError instanceof Error ? callbackError.message : callbackError,
+      );
       response.status(502).json({ error: 'Unable to connect to Lichess' });
     }
   });
@@ -164,4 +175,10 @@ export function attachLichessAuth(app) {
 export function getAccessToken(request) {
   const session = getSession(request);
   return session && session.expiresAt >= Date.now() ? session.accessToken : null;
+}
+
+export function getSessionKey(request) {
+  const sessionId = getCookie(request, 'chessquest_session');
+  const session = sessionId ? sessions.get(sessionId) : undefined;
+  return session && session.expiresAt >= Date.now() ? sessionId : null;
 }

@@ -27,6 +27,27 @@ function clockValue(value) {
   return Number.isFinite(milliseconds) ? milliseconds : null;
 }
 
+function describeGameResult(event, { playerColor }) {
+  const winner = event.winner; // 'white' | 'black' | undefined
+
+  if (winner === 'white' || winner === 'black') {
+    const winnerColor = winner === 'white' ? 'w' : 'b';
+    return winnerColor === playerColor ? 'You won' : 'Opponent won';
+  }
+
+  switch (event.status) {
+    case 'draw':
+    case 'stalemate':
+      return 'Draw';
+    case 'aborted':
+      return 'Game aborted';
+    case 'noStart':
+      return 'Game did not start';
+    default:
+      return `Game ended (${event.status})`;
+  }
+}
+
 function getPromotionLabel(pieceType) {
   return promotionNames[pieceType] ?? pieceType;
 }
@@ -55,6 +76,15 @@ function App() {
 
   const premoveQueueRef = useRef([]);
   const premoveSendingRef = useRef(false);
+  const matchmakingStartPromiseRef = useRef(null);
+  const matchmakingAttemptRef = useRef(null);
+  const matchmakingAbortControllerRef = useRef(null);
+
+
+  const [takebackOffer, setTakebackOffer] = useState(false);    // opponent offered
+  const [takebackPending, setTakebackPending] = useState(false); // we offered
+  const takebackPendingRef = useRef(false);
+  const [gameRated, setGameRated] = useState(false);
 
   const [fen, setFen] = useState(() => new Chess().fen());
   const [lastMove, setLastMove] = useState(null);
@@ -633,6 +663,34 @@ function reconcilePremoves(nextFen, newMoves) {
     );
   }
 
+  function handleTakeback(action) {
+    // action: 'offer' | 'accept' | 'decline'
+    const currentGameId = gameIdRef.current;
+    if (!currentGameId || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    if (action === 'offer' && (takebackOffer || takebackPending)) return;
+    if ((action === 'accept' || action === 'decline') && !takebackOffer) return;
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'game.takeback',
+        gameId: currentGameId,
+        action,
+      }),
+    );
+
+    if (action === 'offer') {
+      takebackPendingRef.current = true;
+      setTakebackPending(true);
+      setGameStatus('Takeback offered');
+    } else if (action === 'accept') {
+      setTakebackOffer(false);
+      setGameStatus('Takeback accepted');
+    } else {
+      setTakebackOffer(false);
+      setGameStatus('Takeback declined');
+    }
+  }
+
   function handleChatSubmit(event) {
     event.preventDefault();
 
@@ -932,7 +990,7 @@ function reconcilePremoves(nextFen, newMoves) {
     boardRanks,
   ]);
 
-  useEffect(() => {
+    useEffect(() => {
     if (!account) {
       setSocketReady(false);
       return undefined;
@@ -956,24 +1014,14 @@ function reconcilePremoves(nextFen, newMoves) {
       setGameStatus('Connected to game server');
     };
 
-    socket.onmessage = (message) => {
-      if (socketRef.current !== socket) return;
-
-      let payload;
-
-      try {
-        payload = JSON.parse(message.data);
-      } catch {
-        setGameStatus(
-          'Received an invalid message from the game server',
-        );
-        return;
-      }
-
+    function handleServerMessage(payload) {
       if (payload.type === 'game.found') {
-          gameIdRef.current = payload.gameId;
-          setGameStatus('Opponent found, waiting for game details…');
-          return;
+        matchmakingAttemptRef.current = null;
+        matchmakingAbortControllerRef.current = null;
+        gameIdRef.current = payload.gameId;
+        setMatchmaking(false);
+        setGameStatus('Opponent found, waiting for game details...');
+        return;
       }
 
       if (payload.type === 'error') {
@@ -997,7 +1045,11 @@ function reconcilePremoves(nextFen, newMoves) {
           setDrawPending(false);
         }
 
-        setMatchmaking(false);
+        if (payload.scope === 'matchmaking') {
+          matchmakingAttemptRef.current = null;
+          matchmakingAbortControllerRef.current = null;
+          setMatchmaking(false);
+        }
         setGameStatus(payload.message);
 
         return;
@@ -1014,6 +1066,15 @@ function reconcilePremoves(nextFen, newMoves) {
           );
         }
 
+        return;
+      }
+
+      if (payload.type === 'game.takeback.result') {
+        if (!payload.ok) {
+          takebackPendingRef.current = false;
+          setTakebackPending(false);
+          setGameStatus(payload.message ?? 'Takeback request was rejected');
+        }
         return;
       }
 
@@ -1092,11 +1153,7 @@ function reconcilePremoves(nextFen, newMoves) {
       }
 
       if (event.type === 'gameFull') {
-        const color =
-          event.white?.id?.toLowerCase() ===
-          account.username?.toLowerCase()
-            ? 'w'
-            : 'b';
+        const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
 
         gameStartFenRef .current = event.initialFen;
 
@@ -1116,6 +1173,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
         gameIdRef.current = event.id;
         setGameId(event.id);
+        setGameRated(Boolean(event.rated));
 
         setGameMode(GAME_MODE.LICHESS);
         setMatchmaking(false);
@@ -1130,9 +1188,7 @@ function reconcilePremoves(nextFen, newMoves) {
         setDrawPending(false);
 
         setChatMessages(
-          Array.isArray(event.chat)
-            ? event.chat
-            : [],
+          Array.isArray(event.chat) ? event.chat : [],
         );
 
         setChatError('');
@@ -1165,7 +1221,7 @@ function reconcilePremoves(nextFen, newMoves) {
         return;
       }
 
-            if (
+      if (
         event.type === 'gameState' &&
         gameStartFenRef .current
       ) {
@@ -1192,27 +1248,23 @@ function reconcilePremoves(nextFen, newMoves) {
         const opponentDrawOffer =
           playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
 
-        if (moveWasMade) {
-          drawPendingRef.current = false;
-          setDrawPending(false);
-          setDrawOffer(false);
-        } else {
-          if (
-            drawPendingRef.current &&
-            !ownDrawOffer
-          ) {
-            drawPendingRef.current = false;
-            setDrawPending(false);
-            setGameStatus(
-              'Draw offer refused',
-            );
-          }
+        const ownTakebackOffer =
+          playerColorRef.current === 'w' ? event.wtakeback : event.btakeback;
+        const opponentTakebackOffer =
+          playerColorRef.current === 'w' ? event.btakeback : event.wtakeback;
 
-          setDrawOffer(
-            Boolean(opponentDrawOffer),
-          );
+        if (moveWasMade) {
+          takebackPendingRef.current = false;
+          setTakebackPending(false);
+          setTakebackOffer(false);
+        } else {
+          setDrawOffer(Boolean(opponentDrawOffer));
           drawPendingRef.current = Boolean(ownDrawOffer);
           setDrawPending(Boolean(ownDrawOffer));
+
+          setTakebackOffer(Boolean(opponentTakebackOffer));
+          takebackPendingRef.current = Boolean(ownTakebackOffer);
+          setTakebackPending(Boolean(ownTakebackOffer));
         }
 
         /*
@@ -1226,12 +1278,19 @@ function reconcilePremoves(nextFen, newMoves) {
           clearArrows: newMoves.length > 0,
         });
 
-        reconcilePremoves(
-          nextFen,
-          newMoves,
-        );
+        const gameEnded = event.status !== 'started';
 
-        if (selectedSquareRef.current) {
+        if (gameEnded) {
+          clearSelection();
+          clearPremoves();
+        } else {
+          reconcilePremoves(
+            nextFen,
+            newMoves,
+          );
+        }
+
+        if (!gameEnded && selectedSquareRef.current) {
           const updatedMoves =
             getLegalMovesForPiece(
               nextFen,
@@ -1258,10 +1317,21 @@ function reconcilePremoves(nextFen, newMoves) {
           updatedAt: Date.now(),
         }));
 
-        if (event.status !== 'started') {
-          setGameStatus(
-            `Game ${event.status}`,
-          );
+        if (gameEnded) {
+          const result = describeGameResult(event, {
+            playerColor: playerColorRef.current,
+          });
+
+          setChatMessages((current) => [
+            ...current,
+            {
+              room: 'system',
+              username: '',
+              text: result,
+            },
+          ]);
+
+          setGameStatus(result);
 
           setOpponentGone(false);
           setClaimWinInSeconds(null);
@@ -1278,6 +1348,28 @@ function reconcilePremoves(nextFen, newMoves) {
           clearSelection();
           clearPremoves();
         }
+      }
+    }
+
+    socket.onmessage = (message) => {
+      if (socketRef.current !== socket) return;
+
+      let payload;
+
+      try {
+        payload = JSON.parse(message.data);
+      } catch {
+        setGameStatus(
+          'Received an invalid message from the game server',
+        );
+        return;
+      }
+
+      try {
+        handleServerMessage(payload);
+      } catch (error) {
+        console.error('Unhandled server message error:', error);
+        setGameStatus('Unexpected error processing server message');
       }
     };
 
@@ -1298,6 +1390,10 @@ function reconcilePremoves(nextFen, newMoves) {
       setSocketReady(false);
 
       clearPremoves();
+      matchmakingAbortControllerRef.current?.abort();
+      matchmakingAbortControllerRef.current = null;
+      matchmakingAttemptRef.current = null;
+      setMatchmaking(false);
 
       setGameStatus(
         'Game server disconnected',
@@ -1315,44 +1411,58 @@ function reconcilePremoves(nextFen, newMoves) {
     };
   }, [account]);
 
-  function handleOnlinePlay() {
+  async function handleOnlinePlay() {
     if (
       !socketReady ||
-      socketRef.current?.readyState !== WebSocket.OPEN
+      socketRef.current?.readyState !== WebSocket.OPEN ||
+      matchmakingAttemptRef.current
     ) {
       setGameStatus('Game server is not connected');
       return;
     }
 
     const { time, increment, rated } = selectedTimeControl;
-
     if (rated && !isRatedAllowed(time)) {
       setGameStatus('Rated games require Rapid or slower.');
       return;
     }
 
+    const attemptId = crypto.randomUUID();
+    const abortController = new AbortController();
+    matchmakingAttemptRef.current = attemptId;
+    matchmakingAbortControllerRef.current = abortController;
+
+    resetForNewGame();
+    socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
     setMatchmaking(true);
     setGameStatus('Searching for an opponent...');
 
-    fetch('/api/game/start', {
+    const startPromise = fetch('/api/game/start', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ time, increment, rated }),
-    })
-      .then((response) =>
-        response.json().then((data) => ({ response, data })),
-      )
-      .then(({ response, data }) => {
-        if (!response.ok) {
-          throw new Error(data.error ?? 'Unable to start game search');
-        }
-        resetForNewGame();
-      })
-      .catch((error) => {
+      body: JSON.stringify({ time, increment, rated, attemptId }),
+      signal: abortController.signal,
+    }).then(async (response) => ({ response, data: await response.json() }));
+
+    matchmakingStartPromiseRef.current = startPromise;
+
+    try {
+      const { response, data } = await startPromise;
+      if (!response.ok) throw new Error(data.error ?? 'Unable to start game search');
+    } catch (error) {
+      socketRef.current?.send(JSON.stringify({ type: 'matchmaking.cancel', attemptId }));
+      if (matchmakingAttemptRef.current === attemptId) {
+        matchmakingAttemptRef.current = null;
+        matchmakingAbortControllerRef.current = null;
         setMatchmaking(false);
-        setGameStatus(error.message);
-      });
+        if (error.name !== 'AbortError') setGameStatus(error.message);
+      }
+    } finally {
+      if (matchmakingStartPromiseRef.current === startPromise) {
+        matchmakingStartPromiseRef.current = null;
+      }
+    }
   }
   function resetForNewGame() {
     botSearchControllerRef.current?.abort();
@@ -1376,6 +1486,7 @@ function reconcilePremoves(nextFen, newMoves) {
     drawPendingRef.current = false;
 
     setGameId(null);
+    setGameRated(false);
     setGameMode(GAME_MODE.LOCAL);
     setPlayerColor(null);
 
@@ -1401,42 +1512,61 @@ function reconcilePremoves(nextFen, newMoves) {
     setOpponentGone(false);
     setClaimWinInSeconds(null);
     setClaimPending(false);
+
+    takebackPendingRef.current = false;
+    setTakebackPending(false);
+    setTakebackOffer(false);
   }
 
   async function handleCancel() {
+    const attemptId = matchmakingAttemptRef.current;
+    if (!attemptId) return;
+
+    socketRef.current?.send(JSON.stringify({ type: 'matchmaking.cancel', attemptId }));
     setCancellingMatchmaking(true);
 
     try {
-      const response = await fetch('/api/game/cancel',
-        {
-          method: 'POST',
-          credentials: 'include',
-        },
-      );
-
-      const data = response.status === 204 ? {} : await response.json();
-
-      if (
-        !response.ok &&
-        response.status !== 404
-      ) {
-        throw new Error(
-          data.error ?? 'Unable to cancel game search',
-        );
+      const pendingStart = matchmakingStartPromiseRef.current;
+      if (pendingStart) {
+        try {
+          await pendingStart;
+        } catch {
+          // The start handler reports its own error.
+        }
       }
-      // Even if the backend said 404, clear our local seek state.
-      gameIdRef.current = null;
-      setGameId(null);
-      setMatchmaking(false);
+
+      if (gameIdRef.current) {
+        setMatchmaking(false);
+        return;
+      }
+
+      const response = await fetch('/api/game/cancel', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptId }),
+      });
+      const data = response.status === 204 ? {} : await response.json();
+      if (!response.ok && response.status !== 404) {
+        throw new Error(data.error ?? 'Unable to cancel game search');
+      }
+
+      if (matchmakingAttemptRef.current === attemptId) {
+        matchmakingAttemptRef.current = null;
+        matchmakingAbortControllerRef.current = null;
+      }
       setGameStatus('Game search cancelled');
     } catch (error) {
+      if (matchmakingAttemptRef.current === attemptId) {
+        matchmakingAttemptRef.current = null;
+        matchmakingAbortControllerRef.current = null;
+      }
       setMatchmaking(false);
       setGameStatus(error.message);
     } finally {
       setCancellingMatchmaking(false);
     }
   }
-
   function handleLogin() {
     window.location.assign(
       '/api/auth/lichess',
@@ -2495,9 +2625,25 @@ function reconcilePremoves(nextFen, newMoves) {
           canStepBackward={canStepBackward}
           canStepForward={canStepForward}
           isReviewing={isReviewing}
+          takebackOffer={takebackOffer}
+          takebackPending={takebackPending}
+          gameRated={gameRated}
+          onTakeback={handleTakeback}
         />
       </aside>
+      <footer className="app-footer">
+        <p>
+          Board API powered by{' '}
+          <a href="https://lichess.org" target="_blank" rel="noreferrer">
+            Lichess
+          </a>
+        </p>
+        <p>
+          <a href="mailto:you@example.com">Report a bug</a>
+        </p>
+      </footer>
     </main>
+    
   );
 }
 

@@ -54,6 +54,10 @@ export default function RightRail({
   claimPending,
   claimWinInSeconds,
   onClaimVictory,
+  takebackOffer,
+  takebackPending,
+  gameRated,
+  onTakeback,
 
   // chat / history
   moveHistory,
@@ -285,6 +289,10 @@ export default function RightRail({
         claimPending={claimPending}
         claimWinInSeconds={claimWinInSeconds}
         onClaimVictory={onClaimVictory}
+        takebackOffer={takebackOffer}
+        takebackPending={takebackPending}
+        gameRated={gameRated}
+        onTakeback={onTakeback}
       />
 
       <div className="chat-panel" aria-label="Game chat and move history">

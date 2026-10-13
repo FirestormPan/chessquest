@@ -1,6 +1,5 @@
 const lichessUrl = 'https://lichess.org';
 const activeSeeks = new Map();
-const cancelledSeeks = new Set();
 // Later should be Shared with the frontend via a config module
 const ALLOWED_TIME_CONTROLS = {
   ultraBullet: [{ time: 15, inc: 0 }, { time: 30, inc: 0 }],
@@ -70,47 +69,46 @@ function isAllowedTimeControl(time, increment) {
     .some((tc) => tc.time === time && tc.inc === increment);
 }
 
-export function attachGameRoutes(app, getAccessToken) {
+export function attachGameRoutes(app, getAccessToken, getSessionKey) {
   app.post('/api/game/start', async (request, response) => {
-
-    const { time, increment, rated = false } = request.body ?? {};
-    if (!isAllowedTimeControl(time, increment)) {
-      response.status(400).json({ error: 'Invalid time control' });
+    const { time, increment, rated = false, attemptId } = request.body ?? {};
+    if (typeof attemptId !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(attemptId)) {
+      response.status(400).json({ error: 'Invalid matchmaking attempt' });
       return;
     }
-    if (rated) {
-      // See "rated restriction" section below
-      if (time < 600) {
-        response.status(400).json({ error: 'Rated board API games must be Rapid or slower' });
-        return;
-      }
+    if (typeof rated !== 'boolean' || !isAllowedTimeControl(time, increment)) {
+      response.status(400).json({ error: 'Invalid game settings' });
+      return;
+    }
+    if (rated && time < 600) {
+      response.status(400).json({ error: 'Rated board API games must be Rapid or slower' });
+      return;
     }
 
     const accessToken = getAccessToken(request);
-    if (!accessToken) {
+    const sessionKey = getSessionKey(request);
+    if (!accessToken || !sessionKey) {
       response.status(401).json({ error: 'Lichess login required' });
       return;
     }
-
-    if (activeSeeks.has(accessToken)) {
+    if (activeSeeks.has(sessionKey)) {
       response.status(409).json({ error: 'A game search is already active' });
       return;
     }
 
-    cancelledSeeks.delete(accessToken);
-
     const seek = {
+      attemptId,
       controller: new AbortController(),
       id: null,
       idPromise: null,
       params: { time, increment, rated },
-      startedAt: Date.now(),  
+      startedAt: Date.now(),
     };
     let resolveSeekId;
     seek.idPromise = new Promise((resolve) => {
       resolveSeekId = resolve;
     });
-    activeSeeks.set(accessToken, seek);
+    activeSeeks.set(sessionKey, seek);
 
     let seekResponse;
     try {
@@ -123,13 +121,13 @@ export function attachGameRoutes(app, getAccessToken) {
         body: new URLSearchParams({
           rated: rated ? 'true' : 'false',
           variant: 'standard',
-          time: String(time/60),
+          time: String(time / 60),
           increment: String(increment),
         }),
         signal: seek.controller.signal,
       });
     } catch {
-      if (activeSeeks.get(accessToken) === seek) activeSeeks.delete(accessToken);
+      if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
       if (seek.cancelRequested) {
         response.status(202).json({ status: 'cancelled' });
         return;
@@ -139,9 +137,8 @@ export function attachGameRoutes(app, getAccessToken) {
     }
 
     if (!seekResponse.ok) {
-      if (activeSeeks.get(accessToken) === seek) activeSeeks.delete(accessToken);
+      if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
       const lichessError = formatLichessError(await seekResponse.text());
-
       const status = seekResponse.status === 403 ? 403 : 502;
       const message = seekResponse.status === 403
         ? 'Lichess denied gameplay permission. Log out and log in again to grant board:play.'
@@ -157,41 +154,50 @@ export function attachGameRoutes(app, getAccessToken) {
       }
     }, seek.controller.signal)
       .catch((error) => {
-        if (error.name !== 'AbortError') {
-          console.error('Lichess seek stream failed:', error);
-        }
+        if (error.name !== 'AbortError') console.error('Lichess seek stream failed:', error);
       })
       .finally(() => {
         resolveSeekId(null);
-        if (activeSeeks.get(accessToken) === seek) activeSeeks.delete(accessToken);
+        if (activeSeeks.get(sessionKey) === seek && !seek.cancelRequested) {
+          const cleanup = setTimeout(() => {
+            if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
+          }, 10_000);
+          cleanup.unref?.();
+        }
       });
 
     response.status(202).json({ status: 'searching' });
   });
 
-  app.post('/api/game/cancel', async (request, response) => {
-    const accessToken = getAccessToken(request);
-    if (!accessToken) {
+  app.post('/api/game/cancel', (request, response) => {
+    const sessionKey = getSessionKey(request);
+    const { attemptId } = request.body ?? {};
+    if (!sessionKey) {
       response.status(401).json({ error: 'Lichess login required' });
       return;
     }
-
-    const seek = activeSeeks.get(accessToken);
-    if (!seek) {
-      response.status(404).json({ error: 'No active game search' });
+    if (!cancelLichessSeek(sessionKey, attemptId)) {
+      response.status(404).json({ error: 'No matching active game search' });
       return;
     }
-
-    cancelledSeeks.add(accessToken);
-    seek.cancelRequested = true;
-    seek.controller.abort();
-    if (activeSeeks.get(accessToken) === seek) activeSeeks.delete(accessToken);
     response.status(202).json({ status: 'cancelled' });
   });
 }
 
-export function isSeekCancelled(accessToken) {
-  return cancelledSeeks.has(accessToken);
+export function claimLichessSeek(sessionKey, attemptId) {
+  const seek = activeSeeks.get(sessionKey);
+  if (!seek || seek.cancelRequested || seek.attemptId !== attemptId) return false;
+  activeSeeks.delete(sessionKey);
+  return true;
+}
+
+export function cancelLichessSeek(sessionKey, attemptId) {
+  const seek = activeSeeks.get(sessionKey);
+  if (!seek || seek.attemptId !== attemptId) return false;
+  seek.cancelRequested = true;
+  seek.controller.abort();
+  activeSeeks.delete(sessionKey);
+  return true;
 }
 
 export function startLichessEventStream(accessToken, onEvent, signal) {
@@ -214,35 +220,49 @@ export function startLichessGameStream(accessToken, gameId, onEvent, signal) {
   });
 }
 
-export async function sendLichessMove(accessToken, gameId, uci) {
+export async function sendLichessMove(accessToken, gameId, uci, signal) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/move/${uci}`, {
     method: 'POST',
     headers: authorizationHeaders(accessToken),
+    signal,
   });
 }
 
-export async function resignLichessGame(accessToken, gameId) {
+export async function handleLichessTakeback(accessToken, gameId, action, signal) {
+  const suffix = action === 'decline' ? '/no' : '/yes';
+
+  return fetch(`${lichessUrl}/api/board/game/${gameId}/takeback${suffix}`, {
+    method: 'POST',
+    headers: authorizationHeaders(accessToken),
+    signal,
+  });
+}
+
+export async function resignLichessGame(accessToken, gameId, signal) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/resign`, {
     method: 'POST',
     headers: authorizationHeaders(accessToken),
+    signal,
   });
 }
 
-export async function handleLichessDraw(accessToken, gameId, accept) {
+export async function handleLichessDraw(accessToken, gameId, accept, signal) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/draw/${accept}`, {
     method: 'POST',
     headers: authorizationHeaders(accessToken),
+    signal,
   });
 }
 
-export async function claimLichessVictory(accessToken, gameId) {
+export async function claimLichessVictory(accessToken, gameId, signal) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/claim-victory`, {
     method: 'POST',
     headers: authorizationHeaders(accessToken),
+    signal,
   });
 }
 
-export async function sendLichessChat(accessToken, gameId, room, text) {
+export async function sendLichessChat(accessToken, gameId, room, text, signal) {
   return fetch(`${lichessUrl}/api/board/game/${gameId}/chat`, {
     method: 'POST',
     headers: {
@@ -250,6 +270,7 @@ export async function sendLichessChat(accessToken, gameId, room, text) {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({ room, text }),
+    signal,
   });
 }
 
