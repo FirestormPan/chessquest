@@ -25,26 +25,25 @@ export default function GameActions({
 }) {
   return (
     <div className="game-actions" aria-label="Game actions">
-      <button
-        className="account-button"
-        type="button"
-        onClick={matchmaking ? onCancel : onPlay}
-        disabled={
-          !socketReady ||
-          cancellingMatchmaking ||
-          (!matchmaking && Boolean(gameId))
-        }
-      >
-        {cancellingMatchmaking
-          ? 'Cancelling...'
-          : matchmaking
-            ? 'Cancel'
-            : gameId
-              ? 'Playing'
-              : socketReady
-                ? 'Play'
-                : 'Connecting...'}
-      </button>
+      {!gameId && (
+        <button
+          className="account-button"
+          type="button"
+          onClick={matchmaking ? onCancel : onPlay}
+          disabled={
+            !socketReady ||
+            cancellingMatchmaking
+          }
+        >
+          {!socketReady
+            ? 'Connect to play'
+            : cancellingMatchmaking
+              ? 'Cancelling...'
+              : matchmaking
+                ? 'Cancel'
+                : 'Play'}
+        </button>
+      )}
 
       {gameId && (
         <>

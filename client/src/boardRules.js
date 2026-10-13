@@ -416,6 +416,10 @@ function validatePremoveSequence(fen, moves, color, allowOwnDestination = true) 
   return true;
 }
 
+function truncateUciMoves(uciMoves, plies) {
+  if (!Array.isArray(uciMoves) || plies <= 0) return uciMoves;
+  return uciMoves.slice(0, Math.max(0, uciMoves.length - plies));
+}
 
 function clearFenEnPassant(fen) {
   const fields = fen.split(' ');
@@ -442,4 +446,4 @@ function getPremovePosition(fen, moves, color) {
 }
 
 export { normalizeFen, parseUciMoves, makeMoveFromUci, getLegalMovesForPiece, applyMoves, getCapturedPieces, getUciHistory, getMoveHistory,
-   getCheckedKingSquare, setFenTurn, clearFenEnPassant, getPremoveMovesForPiece, applyPremove, validatePremoveSequence, getPremovePosition };
+   getCheckedKingSquare, setFenTurn, clearFenEnPassant, getPremoveMovesForPiece, applyPremove, validatePremoveSequence, getPremovePosition, truncateUciMoves };

@@ -5,6 +5,7 @@ import MoveHistory from './MoveHistory';
 import ChatBody from './ChatBody';
 import GameActions from './GameActions';
 import { BOT_STRENGTHS } from '../botEngine';
+import PieceVisual from './PieceVisual';
 
 export default function RightRail({
   view,
@@ -27,6 +28,10 @@ export default function RightRail({
   botActive,
   botStrength = 1000,
   onBotStrengthChange,
+  botPlayerColor = 'w',
+  onBotPlayerColorChange,
+  onBotTakeback,
+  canBotTakeback,
   playerColor,
   gameStatus,
   onPlayBot,
@@ -137,7 +142,7 @@ export default function RightRail({
     );
   }
 
-  if (view === 'bot') {
+    if (view === 'bot') {
     return (
       <div className="bot-picker" aria-label="Play vs bot">
         <div className="bot-picker-heading">
@@ -146,8 +151,61 @@ export default function RightRail({
         </div>
 
         <p className="bot-picker-description">
-          Choose an estimated bot strength.
+          Choose a side and an estimated bot strength.
         </p>
+
+        <fieldset className="bot-color-picker">
+          <legend>Play as</legend>
+          <div className="bot-color-options">
+            <label
+              className={botPlayerColor === 'w' ? 'is-selected' : ''}
+              aria-label="Play as white"
+            >
+              <input
+                type="radio"
+                name="bot-color"
+                value="w"
+                checked={botPlayerColor === 'w'}
+                onChange={() => onBotPlayerColorChange('w')}
+              />
+              <PieceVisual
+                color="w"
+                type="p"
+                skinFolder={getSkinFolderForColor('w')}
+                className="bot-color-piece"
+              />
+            </label>
+
+            <label
+              className={botPlayerColor === 'b' ? 'is-selected' : ''}
+              aria-label="Play as black"
+            >
+              <input
+                type="radio"
+                name="bot-color"
+                value="b"
+                checked={botPlayerColor === 'b'}
+                onChange={() => onBotPlayerColorChange('b')}
+              />
+              <PieceVisual
+                color="b"
+                type="p"
+                skinFolder={getSkinFolderForColor('b')}
+                className="bot-color-piece"
+              />
+            </label>
+
+            <button
+              type="button"
+              className="bot-color-random"
+              onClick={() =>
+                onBotPlayerColorChange(Math.random() < 0.5 ? 'w' : 'b')
+              }
+            >
+              Random
+            </button>
+          </div>
+        </fieldset>
 
         <fieldset className="bot-strength-picker">
           <legend>Strength</legend>
@@ -200,6 +258,15 @@ export default function RightRail({
 
         {botActive && (
           <div className="game-actions" aria-label="Bot game actions">
+            <button
+              className="account-button"
+              type="button"
+              onClick={onBotTakeback}
+              disabled={!canBotTakeback}
+            >
+              Takeback
+            </button>
+
             <button
               className="account-button danger"
               type="button"

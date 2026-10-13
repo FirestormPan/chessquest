@@ -941,6 +941,79 @@ h1 {
   padding: 1rem;
 }
 
+.bot-color-picker {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.bot-color-picker legend {
+  color: var(--ink-dim);
+  font-family: 'IM Fell English SC', serif;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.45rem;
+  text-transform: uppercase;
+}
+
+.bot-color-options {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.bot-color-options label,
+.bot-color-random {
+  align-items: center;
+  background: #140d07;
+  border: 1px solid #5a4630;
+  color: var(--parchment);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-family: 'IM Fell English SC', serif;
+  font-size: 0.72rem;
+  justify-content: center;
+  letter-spacing: 0.08em;
+  padding: 0.55rem;
+  text-transform: uppercase;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.bot-color-options label.is-selected {
+  border-color: var(--brass);
+  color: var(--brass-bright);
+}
+
+.bot-color-options label:hover,
+.bot-color-random:hover {
+  border-color: var(--brass-dim);
+  color: var(--brass-bright);
+}
+
+/* Hide the radio dot; the label border acts as the selected state */
+.bot-color-options input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+/* Override .piece-image's 1em sizing for the picker icons */
+.bot-color-options label .piece-image,
+.bot-color-options label .bot-color-piece {
+  height: 1.75rem;
+  width: 1.75rem;
+}
+
+/* Fallback glyph when skins are unavailable */
+.bot-color-options label > span.bot-color-piece {
+  font-family: Georgia, serif;
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
 .bot-picker {
   background: linear-gradient(180deg, rgba(36, 24, 18, 0.92), rgba(20, 13, 7, 0.92));
   border: 1px solid var(--border-soft);
