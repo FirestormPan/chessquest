@@ -77,6 +77,15 @@ export default function RightRail({
   canStepBackward,
   canStepForward,
   isReviewing,
+
+  takebackOffer,
+  takebackPending,
+  gameRated,
+  onTakeback,
+
+  onBotPlayerColorChange,
+  onBotTakeback,
+  canBotTakeback
 }) {
   if (view === 'hello') {
     return (
@@ -145,9 +154,7 @@ export default function RightRail({
           <h2>Play vs Bot</h2>
         </div>
 
-        <p className="bot-picker-description">
-          Choose an estimated bot strength.
-        </p>
+        
 
         <fieldset className="bot-color-picker">
           <legend>Play as</legend>
@@ -256,6 +263,14 @@ export default function RightRail({
         {botActive && (
           <div className="game-actions" aria-label="Bot game actions">
             <button
+              className="account-button"
+              type="button"
+              onClick={onBotTakeback}
+              disabled={!canBotTakeback}
+            >
+              Takeback
+            </button>
+            <button
               className="account-button danger"
               type="button"
               onClick={onResign}
@@ -331,6 +346,10 @@ export default function RightRail({
         claimPending={claimPending}
         claimWinInSeconds={claimWinInSeconds}
         onClaimVictory={onClaimVictory}
+        takebackOffer={takebackOffer}
+        takebackPending={takebackPending}
+        gameRated={gameRated}
+        onTakeback={onTakeback}
       />
 
       <div className="chat-panel" aria-label="Game chat and move history">

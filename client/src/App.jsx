@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Chess } from 'chess.js';
-import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition,}   from './boardRules';
+import {  parseUciMoves,  getLegalMovesForPiece,  applyMoves, applyPremove ,  getCapturedPieces,  getMoveHistory,  getCheckedKingSquare,  getPremoveMovesForPiece,  validatePremoveSequence, getPremovePosition, truncateUciMoves}   from './boardRules';
 import { GAME_MODE, GAME_PHASE, getCapabilities, canPlayerMove } from './gameMode';
 import {  TIME_CONTROL_CATEGORIES,  isRatedAllowed,} from './timeControls';
 import PieceVisual from './components/PieceVisual';
@@ -828,7 +828,6 @@ function reconcilePremoves(nextFen, newMoves) {
     }, 0);
 
     setGameStatus(message);
-    resetForNewGame();
 
     return undefined;
   }, [fen, gameMode, botActive]);
@@ -1666,7 +1665,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setFen(startFen);
 
     gameStartFenRef .current = startFen;
-    playerColorRef.current = 'w';
+    playerColorRef.current = botPlayerColor;
     gameIdRef.current = null;
     moveCountRef.current = 0;
     drawPendingRef.current = false;
@@ -1674,7 +1673,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setGameId(null);
     setGameMode(GAME_MODE.BOT);
-    setPlayerColor('w');
+    setPlayerColor(botPlayerColor);
     setBotActive(true);
 
     setCapturedPieces({ w: [], b: [] });
@@ -1702,6 +1701,44 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
     setRightRailView('game');
+  }
+
+  function handleBotTakeback() {
+    if (gameMode !== GAME_MODE.BOT) return;
+    if (!botActive) return;
+
+    const currentGame = new Chess(fenRef.current);
+    if (currentGame.isGameOver()) return;
+
+    const moves = uciHistoryRef.current;
+    if (moves.length === 0) return;
+
+    const humanColor = playerColorRef.current;
+    if (!humanColor) return;
+
+    /*
+    * Remove one ply if it's the bot's turn (the bot hasn't
+    * replied yet), or two plies if it's the human's turn
+    * (the bot already moved). Either way the result is a
+    * position where the human is to move.
+    */
+    const botColor = humanColor === 'w' ? 'b' : 'w';
+    const pliesToRemove =
+      currentGame.turn() === botColor ? 1 : 2;
+
+    if (moves.length < pliesToRemove) return;
+
+    botSearchControllerRef.current?.abort();
+
+    const truncated = truncateUciMoves(moves, pliesToRemove);
+    const nextFen = applyMoves(gameStartFenRef.current, truncated);
+
+    commitPosition(nextFen, {
+      uciMoves: truncated,
+      clearArrows: true,
+    });
+
+    setGameStatus('Takeback');
   }
 
   function handleSquareClick(square) {
@@ -2635,7 +2672,6 @@ function reconcilePremoves(nextFen, newMoves) {
           onBotStrengthChange={setBotStrength}
           playerColor={playerColor}
           gameStatus={gameStatus}
-          onPlayBot={handlePlayBot}
           skinFolders={skinFolders}
           selectedSkinFolder={selectedSkinFolder}
           selectedOpponentSkinFolder={selectedOpponentSkinFolder}
@@ -2659,7 +2695,14 @@ function reconcilePremoves(nextFen, newMoves) {
           moveHistory={moveHistory}
           reviewPly={reviewPly}
           onSelectPly={setReviewPly}
-           botPlayerColor={botPlayerColor}
+
+          onBotTakeback={handleBotTakeback}
+          canBotTakeback={
+            botActive && uciHistory.length > (playerColor === 'b' ? 1 : 0)
+          }
+          onPlayBot={handlePlayBot}
+          botPlayerColor={botPlayerColor}
+          onBotPlayerColorChange={setBotPlayerColor}
           botColorMode={botColorMode}
           onBotColorModeChange={handleBotColorModeChange}
           chatMessages={chatMessages}
