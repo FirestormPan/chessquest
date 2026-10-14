@@ -291,6 +291,13 @@ export default function RightRail({
             moveHistory={moveHistory}
             reviewPly={reviewPly}
             onSelectPly={onSelectPly}
+            uciHistory={uciHistory}
+            canStepBackward={canStepBackward}
+            canStepForward={canStepForward}
+            onStepBackward={onStepBackward}
+            onStepForward={onStepForward}
+            onReturnLive={onReturnLive}
+            isReviewing={isReviewing}
           />
         </div>
       </>
@@ -360,43 +367,6 @@ export default function RightRail({
           </div>
           <br />
           <div className="chat-header-actions">
-            {view === 'history' && uciHistory.length > 0 && (
-              <>
-                <button
-                  className="history-step-button"
-                  type="button"
-                  onClick={onStepBackward}
-                  disabled={!canStepBackward}
-                  aria-label="Previous move"
-                  title="Previous move"
-                >
-                  ‹
-                </button>
-
-                <button
-                  className="history-step-button"
-                  type="button"
-                  onClick={onStepForward}
-                  disabled={!canStepForward}
-                  aria-label="Next move"
-                  title="Next move"
-                >
-                  ›
-                </button>
-
-                <button
-                  className={`account-button secondary history-live-button ${
-                    isReviewing ? 'is-reviewing' : ''
-                  }`}
-                  type="button"
-                  onClick={onReturnLive}
-                  disabled={!isReviewing}
-                >
-                  {isReviewing ? '⟲ Live' : '● Live'}
-                </button>
-              </>
-            )}
-
             <button
               className="account-button secondary"
               type="button"
@@ -413,6 +383,13 @@ export default function RightRail({
             moveHistory={moveHistory}
             reviewPly={reviewPly}
             onSelectPly={onSelectPly}
+            uciHistory={uciHistory}
+            canStepBackward={canStepBackward}
+            canStepForward={canStepForward}
+            onStepBackward={onStepBackward}
+            onStepForward={onStepForward}
+            onReturnLive={onReturnLive}
+            isReviewing={isReviewing}
           />
         ) : (
           <ChatBody

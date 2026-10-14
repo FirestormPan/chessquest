@@ -9,11 +9,10 @@ export default function MoveHistory({
   onStepForward,
   onReturnLive,
   isReviewing,
-  showControls = false,
 }) {
   return (
     <div className="move-history-wrapper">
-      {showControls && uciHistory.length > 0 && (
+      {uciHistory.length > 0 && (
         <div className="chat-header-actions">
           <button
             className="history-step-button"
