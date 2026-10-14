@@ -46,6 +46,74 @@ async function responseError(response) {
   }
 }
 
+async function maintainEventStream(accessToken, onEvent, signal, onLost) {
+  const safeOnEvent = (event) => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      console.error('Event handler threw:', error);
+    }
+  };
+
+  let attempt = 0;
+  while (!signal.aborted) {
+    let error = null;
+    try {
+      await startLichessEventStream(accessToken, safeOnEvent, signal);
+    } catch (caught) {
+      if (signal.aborted || caught.name === 'AbortError') return;
+      error = caught;
+    }
+    if (signal.aborted) return;
+    attempt += 1;
+    if (attempt === 1) {
+      try {
+        onLost(error?.message ?? 'Lichess event stream closed');
+      } catch (handlerError) {
+        console.error('onLost handler threw:', handlerError);
+      }
+    }
+    const delay = Math.min(1000 * 2 ** (attempt - 1), 30_000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
+
+async function maintainGameStream(accessToken, gameId, onEvent, signal, onLost) {
+  const safeOnEvent = (event) => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      console.error('Game event handler threw:', error);
+    }
+  };
+
+  let attempt = 0;
+  while (!signal.aborted) {
+    let error = null;
+    try {
+      await startLichessGameStream(accessToken, gameId, safeOnEvent, signal);
+    } catch (caught) {
+      if (signal.aborted || caught.name === 'AbortError') return;
+      if (/404/.test(caught.message ?? '')) {
+        onLost('Game no longer available on Lichess');
+        return;
+      }
+      error = caught;
+    }
+    if (signal.aborted) return;
+    attempt += 1;
+    if (attempt === 1) {
+      try {
+        onLost(error?.message ?? 'Lichess game stream closed');
+      } catch (handlerError) {
+        console.error('onLost handler threw:', handlerError);
+      }
+    }
+    const delay = Math.min(1000 * 2 ** (attempt - 1), 30_000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
+
 export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
   const webSocketServer = new WebSocketServer({
     server,
@@ -59,8 +127,8 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       return;
     }
 
-    const accessToken = getAccessToken(request);
-    const sessionKey = getSessionKey(request);
+    let accessToken = getAccessToken(request);
+    let sessionKey = getSessionKey(request);
     if (!accessToken || !sessionKey) {
       send(socket, { type: 'error', message: 'Lichess login required' });
       socket.close();
@@ -76,7 +144,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     let commandWindowStartedAt = Date.now();
     let commandCount = 0;
 
-    startLichessEventStream(accessToken, (event) => {
+    maintainEventStream(accessToken, (event) => {
       // Handle incoming challenges
       if (event.type === 'challenge' && event.challenge) {
         const challenge = event.challenge;
@@ -118,30 +186,47 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       send(socket, { type: 'game.found', gameId });
 
       gameStreamController = new AbortController();
-      startLichessGameStream(accessToken, gameId, (gameEvent) => {
-        if (gameEvent.type === 'gameFull') {
-          receivedMoveCount =
-            gameEvent.state.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0;
-        }
-        send(socket, { type: 'game.event', event: gameEvent });
-       if (gameEvent.type === 'gameState' && gameEvent.status !== 'started') {
-        gameStreamController?.abort();
-        gameStreamController = null;
-        gameId = null;
-        receivedMoveCount = 0;
-      }
-      }, gameStreamController.signal).catch((error) => {
-        if (error.name !== 'AbortError') {
-          send(socket, { type: 'error', message: error.message });
-        }
+      maintainGameStream(
+        accessToken,
+        gameId,
+        (gameEvent) => {
+          send(socket, { type: 'game.event', event: gameEvent });
+
+          const isTerminal =
+            (gameEvent.type === 'gameState' && gameEvent.status !== 'started') ||
+            (gameEvent.type === 'gameFull' && gameEvent.state && gameEvent.state?.status !== 'started');
+
+          if (isTerminal) {
+            gameStreamController?.abort();
+            gameStreamController = null;
+            gameId = null;
+          }
+        },
+        gameStreamController.signal,
+        (message) => {
+          send(socket, { type: 'error', message });
+        },
+      ).catch((error) => {
+          console.error('Game stream maintenance failed:', error);
       });
-    }, abortController.signal).catch((error) => {
-      if (error.name !== 'AbortError') {
-        send(socket, { type: 'error', message: error.message });
-      }
+    },  abortController.signal,
+        (message) => {
+          send(socket, { type: 'error', message });
+    }).catch((error) => {
+      console.error('Event stream maintenance failed:', error);
     });
 
     socket.on('message', (rawMessage) => {
+      const currentToken = getAccessToken(request);
+      const currentSessionKey = getSessionKey(request);
+      if (!currentToken || !currentSessionKey) {
+        send(socket, { type: 'error', message: 'Session expired. Please log in again.' });
+        socket.close(1008, 'Session expired');
+        return;
+      }
+      accessToken = currentToken;
+      sessionKey = currentSessionKey;
+      
       const now = Date.now();
       if (now - commandWindowStartedAt >= 10_000) {
         commandWindowStartedAt = now;
@@ -176,7 +261,17 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
               });
               return;
             }
-            awaitingMatchAttemptId = gameId ? null : message.attemptId;
+
+            if (gameId) {
+              send(socket, {
+                type: 'error',
+                scope: 'matchmaking',
+                message: 'A game is already in progress',
+              });
+              return;
+            }
+
+            awaitingMatchAttemptId = message.attemptId;
             return;
           }
 
@@ -258,7 +353,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
             const drawResponse = await handleLichessDraw(
               accessToken,
               gameId,
-              message.accept,
+              message.accept ? 'yes' : 'no',
               commandController.signal,
             );
             send(socket, {

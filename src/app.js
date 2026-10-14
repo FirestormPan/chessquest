@@ -10,12 +10,51 @@ import { attachGameRoutes } from './game.js';
 
 const app = express();
 
-app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_URL ?? 'http://localhost:5173',
   credentials: true,
 }));
 app.use(express.json());
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'ws:', 'wss:'],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+
+const gameLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please slow down' },
+});
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please slow down' },
+});
+
+app.use('/api/game/start', gameLimiter);
+app.use('/api/game/cancel', gameLimiter);
+app.use('/api/auth/lichess', authLimiter);
+
 
 attachLichessAuth(app);
 attachGameRoutes(app, getAccessToken, getSessionKey);
@@ -57,42 +96,5 @@ app.get('/api/skins', async (_request, response) => {
     response.status(500).json({ error: 'Unable to load piece skins' });
   }
 });
-
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-        imgSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", 'ws:', 'wss:'],
-        frameAncestors: ["'none'"],
-        objectSrc: ["'none'"],
-        baseUri: ["'self'"],
-      },
-    },
-    crossOriginEmbedderPolicy: false,
-  }),
-);
-
-const gameLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please slow down' },
-});
-const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please slow down' },
-});
-app.use('/api/game/start', gameLimiter);
-app.use('/api/game/cancel', gameLimiter);
-app.use('/api/auth/lichess', authLimiter);
 
 export default app;

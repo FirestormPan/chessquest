@@ -57,7 +57,8 @@ function parseNdjsonLine(line, onMessage) {
     onMessage(JSON.parse(line));
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error('Lichess returned an invalid event');
+      console.error('Lichess sent malformed NDJSON:', line);
+      return;
     }
     throw error;
   }
@@ -299,4 +300,14 @@ export async function acceptLichessChallenge(accessToken, challengeId, color = '
     method: 'POST',
     headers: authorizationHeaders(accessToken),
   });
+}
+
+
+export function cancelAllLichessSeeks(sessionKey) { //for the user with the sessionKey
+  const seek = activeSeeks.get(sessionKey);
+  if (!seek) return false;
+  seek.cancelRequested = true;
+  seek.controller.abort();
+  activeSeeks.delete(sessionKey);
+  return true;
 }

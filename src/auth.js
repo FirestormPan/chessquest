@@ -4,6 +4,7 @@ import {
   randomUUID,
 } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { cancelAllLichessSeeks } from './game.js';
 
 const authorizationUrl = 'https://lichess.org/oauth';
 const tokenUrl = 'https://lichess.org/api/token';
@@ -148,25 +149,23 @@ export function attachLichessAuth(app) {
     }
   });
 
-  app.get('/api/auth/me', (request, response) => {
-    const session = getSession(request);
-    if (!session || session.expiresAt < Date.now()) {
-      if (session) {
-        const sessionId = getCookie(request, 'chessquest_session');
-        sessions.delete(sessionId);
-        saveSessions();
-      }
-      response.status(401).json({ authenticated: false });
-      return;
+app.get('/api/auth/me', (request, response) => {
+  const session = getSession(request);
+  if (!session || session.expiresAt < Date.now()) {
+    if (session) {
+      const sessionId = getCookie(request, 'chessquest_session');
+      removeSession(sessionId);
     }
+    response.status(401).json({ authenticated: false });
+    return;
+  }
 
-    response.json({ authenticated: true, account: session.account });
-  });
+  response.json({ authenticated: true, account: session.account });
+});
 
   app.post('/api/auth/logout', (request, response) => {
     const sessionId = getCookie(request, 'chessquest_session');
-    sessions.delete(sessionId);
-    saveSessions();
+    removeSession(sessionId);
     clearSessionCookie(response);
     response.status(204).end();
   });
@@ -181,4 +180,11 @@ export function getSessionKey(request) {
   const sessionId = getCookie(request, 'chessquest_session');
   const session = sessionId ? sessions.get(sessionId) : undefined;
   return session && session.expiresAt >= Date.now() ? sessionId : null;
+}
+
+function removeSession(sessionId) {
+  if (!sessionId) return;
+  cancelAllLichessSeeks(sessionId);
+  sessions.delete(sessionId);
+  saveSessions();
 }
