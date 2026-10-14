@@ -127,7 +127,7 @@ function App() {
     b: [],
   });
 
-  const [rightRailView, setRightRailView] = useState('game');
+  const [rightRailView, setRightRailView] = useState('bot');
 
   const [skinFolders, setSkinFolders] = useState([]);
   const [selectedSkinFolder, setSelectedSkinFolder] =

@@ -87,7 +87,7 @@ export default function RightRail({
   onBotTakeback,
   canBotTakeback
 }) {
-  if (view === 'hello') {
+  if (view === 'select-skin') {
     return (
       <div className="skin-picker" aria-label="Choose a piece skin">
         <div className="skin-picker-heading">
@@ -212,7 +212,7 @@ export default function RightRail({
         </fieldset>
 
         <fieldset className="bot-strength-picker">
-          <legend>Strength</legend>
+          <legend>Bot Strength</legend>
           <div className="bot-strength-options">
             {BOT_STRENGTHS.map((strength) => (
               <label
@@ -403,7 +403,7 @@ export default function RightRail({
               onClick={onToggleHistory}
               aria-pressed={view === 'history'}
             >
-              {view === 'history' ? 'Chat' : 'History'}
+              {view === 'history' ? 'Chat' : 'Move History'}
             </button>
           </div>
         </div>
