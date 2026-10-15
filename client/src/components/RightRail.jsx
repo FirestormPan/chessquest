@@ -25,10 +25,8 @@ export default function RightRail({
   gameId,
 
   // bot
-
   botStrength = 1000,
   onBotStrengthChange,
-  botPlayerColor,
   botColorMode = 'w',
   onBotColorModeChange,
   playerColor,
@@ -86,11 +84,23 @@ export default function RightRail({
   gameRated,
   onTakeback,
 
-
-  onBotPlayerColorChange,
   onBotTakeback,
   canBotTakeback
 }) {
+  if(view === 'info') {
+    return (
+      <div className="game-info" aria-label="Game information">
+        <span className="chat-kicker">Game Controls</span>
+        <p> Click on a piece to see all available moves. Then click on a destination square to make a move. Alternatively you may drag and drop a piece. <br /> <br />
+              Right click on a piece and drag to a destination square to draw planning Arrows. <br /> <br />
+              To make a pre-move just make a move while it is your opponent's turn. You can also make multiple pre-moves in a row.
+
+        </p>
+        
+      </div>
+    );
+  }
+
   if (view === 'select-skin') {
     return (
       <div className="skin-picker" aria-label="Choose a piece skin">

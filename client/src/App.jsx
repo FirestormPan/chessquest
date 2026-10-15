@@ -2506,6 +2506,16 @@ function reconcilePremoves(nextFen, newMoves) {
           >
             Vs Bot
           </button>
+
+          <button
+            className="account-button secondary"
+            type="button"
+            onClick={() =>
+              setRightRailView('info')
+            }
+          >
+            Controls
+          </button>
         </div>
 
         {gameStatus && (
