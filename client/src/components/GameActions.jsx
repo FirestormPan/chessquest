@@ -11,7 +11,7 @@ export default function GameActions({
   onDraw,
 
   onResign,
-
+  confirmResign,
   canClaimVictory,
   opponentGone,
   gameStatus,
@@ -84,7 +84,7 @@ export default function GameActions({
           )}
 
           <button className="account-button danger" type="button" onClick={onResign}>
-            Resign
+            {confirmResign ? 'Sure?' : 'Resign'}
           </button>
 
           {canClaimVictory &&

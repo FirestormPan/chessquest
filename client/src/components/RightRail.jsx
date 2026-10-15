@@ -25,7 +25,7 @@ export default function RightRail({
   gameId,
 
   // bot
-  botActive,
+
   botStrength = 1000,
   onBotStrengthChange,
   botPlayerColor,
@@ -34,7 +34,7 @@ export default function RightRail({
   playerColor,
   gameStatus,
   onPlayBot,
-  botGameEnded, 
+  botStatus,
   onPlayAgain,
 
   // skins
@@ -56,6 +56,7 @@ export default function RightRail({
   drawPending,
   onDraw,
   onResign,
+  confirmResign,
   opponentGone,
   claimPending,
   claimWinInSeconds,
@@ -85,7 +86,6 @@ export default function RightRail({
   gameRated,
   onTakeback,
 
-  confirmResign,
 
   onBotPlayerColorChange,
   onBotTakeback,
@@ -255,16 +255,16 @@ export default function RightRail({
           <span className="chat-kicker">Practice</span>
 
           <h2>
-            {botGameEnded
+            {botStatus === 'ended'
               ? 'Game Over'
-              : botActive
+              : botStatus === 'playing'
                 ? 'Playing vs Bot'
                 : 'Bot game'}
           </h2>
 
-          {botGameEnded ? (
+          {botStatus === 'ended' ? (
             <p>{gameStatus}</p>
-          ) : botActive ? (
+          ) : botStatus === 'playing' ? (
             <>
               <p>Estimated strength: ~{botStrength}</p>
               <p>You play: {playerColor === 'w' ? 'White' : 'Black'}</p>
@@ -274,7 +274,7 @@ export default function RightRail({
           )}
         </div>
           <div className="game-actions" aria-label="Bot game actions">
-            {botGameEnded ? (
+            {botStatus === 'ended' ? (
               <button
                 className="account-button"
                 type="button"
@@ -282,7 +282,7 @@ export default function RightRail({
               >
                 Play Again
               </button>
-            ) : botActive ? (
+            ) : botStatus === 'playing' ? (
               <>
                 <button
                   className="account-button"
@@ -301,8 +301,8 @@ export default function RightRail({
                   {confirmResign ? 'Sure?' : 'Resign'}
                 </button>
               </>
-            ) : null}
-          </div>
+          ) : null}
+        </div>
 
         <div className="chat-panel" aria-label="Move history">
           <div className="chat-header">
@@ -371,6 +371,7 @@ export default function RightRail({
         drawPending={drawPending}
         onDraw={onDraw}
         onResign={onResign}
+        confirmResign={confirmResign}
         canClaimVictory={capabilities.claimVictory}
         opponentGone={opponentGone}
         gameStatus={clockSnapshot?.status ?? ''}

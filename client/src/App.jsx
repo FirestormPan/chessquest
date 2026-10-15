@@ -66,9 +66,7 @@ function App() {
 
   const [confirmResign, setConfirmResign] = useState(false);
 
-  const [botGameEnded, setBotGameEnded] = useState(false);  
-  const botGameEndedRef = useRef(false);
-  const botSearchControllerRef = useRef(null);
+
 
   const moveCountRef = useRef(0);
   const lastClickRef = useRef({ square: null, time: 0 });
@@ -169,7 +167,8 @@ function App() {
   const [premoveQueue, setPremoveQueue] = useState([]);
   const [premovesEnabled, setPremovesEnabled] = useState(true);
 
-  const [botActive, setBotActive] = useState(false);
+const [botStatus, setBotStatus] = useState('idle');  
+  const botSearchControllerRef = useRef(null);
   const [botStrength, setBotStrength] = useState(1000);
   const [botPlayerColor, setBotPlayerColor] = useState('w');
   const [botColorMode, setBotColorMode] = useState('w');
@@ -235,7 +234,7 @@ function App() {
     }
 
     if (gameMode === GAME_MODE.BOT) {
-      return botActive && !botGameEnded
+      return botStatus === 'playing'
         ? GAME_PHASE.PLAYING
         : GAME_PHASE.IDLE;
     }
@@ -249,8 +248,7 @@ function App() {
     matchmaking,
     gameId,
     gameMode,
-    botActive,
-    botGameEnded,
+    botStatus
   ]);
 
   const checkedSquare = getCheckedKingSquare(boardFen);
@@ -617,22 +615,18 @@ function reconcilePremoves(nextFen, newMoves) {
 }
 
   function handleResign() {
-    // First click: request confirmation
     if (!confirmResign) {
       setConfirmResign(true);
       return;
     }
 
-    // Second click: execute resignation
     if (gameMode === GAME_MODE.BOT) {
-      if (!botActive) return;
+      if (botStatus !== 'playing') return;
 
       botSearchControllerRef.current?.abort();
 
-      botGameEndedRef.current = true;
+      setBotStatus('ended');
       setGameStatus('You resigned. Bot wins.');
-      setBotActive(false);
-      setBotGameEnded(true);
       setConfirmResign(false);
 
       return;
@@ -760,8 +754,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return undefined;
-    if (!botActive) return undefined;
     
+    if (botStatus !== 'playing') return undefined;
+
     const humanColor = playerColorRef.current;
     if (!humanColor) return undefined;
 
@@ -779,14 +774,13 @@ function reconcilePremoves(nextFen, newMoves) {
       try {
          const move = await getBotMove(requestFen, { strength: botStrength, signal: controller.signal });
 
-        if (
-          !move ||
-          controller.signal.aborted ||
-          botGameEndedRef.current ||
-          fenRef.current !== requestFen
-        ) {
-          return;
-        }
+          if (
+            !move ||
+            controller.signal.aborted ||
+            fenRef.current !== requestFen
+          ) {
+            return;
+          }
 
         const latest = new Chess(fenRef.current);
         const isLegal = latest.moves({ verbose: true }).some(
@@ -823,24 +817,24 @@ function reconcilePremoves(nextFen, newMoves) {
         botSearchControllerRef.current = null;
       }
     };
-  }, [fen, gameMode, botActive, botStrength]);
+  }, [fen, gameMode, botStatus, botStrength]);
  
   useEffect(() => {
-    if (gameMode !== GAME_MODE.BOT) return undefined;
-    if (!botActive) return undefined;
-    if (botGameEndedRef.current) return undefined;
+    if (gameMode !== GAME_MODE.BOT) return;
+    if (botStatus !== 'playing') return;
 
     const chess = new Chess(fen);
-    if (!chess.isGameOver()) return undefined;
 
-    botGameEndedRef.current = true;
-    setBotGameEnded(true);
-    setBotActive(false)
+    if (!chess.isGameOver()) return;
 
     let message = 'Game over.';
+
     if (chess.isCheckmate()) {
       const humanLost = chess.turn() === playerColorRef.current;
-      message = humanLost ? 'Checkmate. Bot wins.' : 'Checkmate. You win!';
+
+      message = humanLost
+        ? 'Checkmate. Bot wins.'
+        : 'Checkmate. You win!';
     } else if (chess.isStalemate()) {
       message = 'Stalemate — draw.';
     } else if (chess.isThreefoldRepetition()) {
@@ -851,14 +845,11 @@ function reconcilePremoves(nextFen, newMoves) {
       message = 'Draw.';
     }
 
-    window.setTimeout(() => {
-      window.alert(message);
-    }, 0);
+    botSearchControllerRef.current?.abort();
 
+    setBotStatus('ended');
     setGameStatus(message);
-
-    return undefined;
-  }, [fen, gameMode, botActive]);
+  }, [fen, gameMode, botStatus]);
 
   useEffect(() => {
     premoveQueueRef.current = premoveQueue;
@@ -1551,8 +1542,8 @@ function reconcilePremoves(nextFen, newMoves) {
     gameIdRef.current = null;
     moveCountRef.current = 0;
 
-    botGameEndedRef.current = false;
-    setBotActive(false);
+    setBotStatus('idle');
+    setConfirmResign(false);
 
     drawPendingRef.current = false;
     localStorage.removeItem('chessquest:active-game');
@@ -1589,7 +1580,6 @@ function reconcilePremoves(nextFen, newMoves) {
     setTakebackPending(false);
     setTakebackOffer(false);
 
-    setConfirmResign(false);
   }
 
   async function handleCancel() {
@@ -1668,8 +1658,8 @@ function reconcilePremoves(nextFen, newMoves) {
       setClaimWinInSeconds(null);
       setClaimPending(false);
 
-      botGameEndedRef.current = false;
-      setBotActive(false);
+      setBotStatus('idle');
+      setConfirmResign(false);
 
       setAccount(null);
     } catch {
@@ -1699,12 +1689,11 @@ function reconcilePremoves(nextFen, newMoves) {
     gameIdRef.current = null;
     moveCountRef.current = 0;
     drawPendingRef.current = false;
-    botGameEndedRef.current = false;
 
     setGameId(null);
     setGameMode(GAME_MODE.BOT);
     setPlayerColor(botPlayerColor);
-    setBotActive(true);
+
 
     setCapturedPieces({ w: [], b: [] });
     setClockSnapshot(null);
@@ -1732,7 +1721,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
     setRightRailView('game');
 
-    setBotGameEnded(false);
+    setBotStatus('playing');
   }
 
   function handlePlayAgain() {
@@ -1742,7 +1731,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
   function handleBotTakeback() {
     if (gameMode !== GAME_MODE.BOT) return;
-    if (!botActive) return;
+    if (botStatus !== 'playing') return;    
 
     const currentGame = new Chess(fenRef.current);
     if (currentGame.isGameOver()) return;
@@ -2504,7 +2493,7 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            disabled={botActive}
+            disabled={botStatus === 'playing'}
             onClick={() => setRightRailView('game')}
           >
             VS Player
@@ -2513,7 +2502,7 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            onClick={() => setRightRailView(botActive ? 'game' : 'bot')}
+            onClick={() => setRightRailView(botStatus === 'playing' ? 'game' : 'bot')}
           >
             Vs Bot
           </button>
@@ -2704,10 +2693,9 @@ function reconcilePremoves(nextFen, newMoves) {
           setSelectedTimeControl={setSelectedTimeControl}
           matchmaking={matchmaking}
           gameId={gameId}
-          botActive={botActive}
+          botStatus={botStatus}
           botStrength={botStrength}
           onBotStrengthChange={setBotStrength}
-          botGameEnded={botGameEnded}
           playerColor={playerColor}
           gameStatus={gameStatus}
           skinFolders={skinFolders}
@@ -2737,7 +2725,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
           onBotTakeback={handleBotTakeback}
           canBotTakeback={
-            botActive && uciHistory.length > (playerColor === 'b' ? 1 : 0)
+            botStatus === 'playing' && uciHistory.length > (playerColor === 'b' ? 1 : 0)
           }
           onPlayBot={handlePlayBot}
           onPlayAgain={handlePlayAgain}
