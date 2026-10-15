@@ -1583,14 +1583,17 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   async function handleCancel() {
-    const attemptId = matchmakingAttemptRef.current;
+      const attemptId = matchmakingAttemptRef.current;
     if (!attemptId) return;
 
-    socketRef.current?.send(JSON.stringify({ type: 'matchmaking.cancel', attemptId }));
+    socketRef.current?.send(
+      JSON.stringify({ type: 'matchmaking.cancel', attemptId })
+    );
     setCancellingMatchmaking(true);
 
     try {
       const pendingStart = matchmakingStartPromiseRef.current;
+
       if (pendingStart) {
         try {
           await pendingStart;
@@ -1599,8 +1602,17 @@ function reconcilePremoves(nextFen, newMoves) {
         }
       }
 
+      // The attempt may have changed while awaiting the start request.
+      if (matchmakingAttemptRef.current !== attemptId) {
+        return;
+      }
+
+      // A game was found while cancellation was pending.
       if (gameIdRef.current) {
         setMatchmaking(false);
+        setGameStatus('Game found');
+        matchmakingAttemptRef.current = null;
+        matchmakingAbortControllerRef.current = null;
         return;
       }
 
@@ -1610,8 +1622,27 @@ function reconcilePremoves(nextFen, newMoves) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ attemptId }),
       });
-      const data = response.status === 204 ? {} : await response.json();
-      if (!response.ok && response.status !== 404) {
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 404) {
+        // The seek may already have been claimed or removed.
+        if (gameIdRef.current) {
+          setGameStatus('Game found');
+        } else {
+          setGameStatus('Game search is no longer active');
+        }
+
+        if (matchmakingAttemptRef.current === attemptId) {
+          matchmakingAttemptRef.current = null;
+          matchmakingAbortControllerRef.current = null;
+        }
+
+        setMatchmaking(false);
+        return;
+      }
+
+      if (!response.ok) {
         throw new Error(data.error ?? 'Unable to cancel game search');
       }
 
@@ -1619,18 +1650,22 @@ function reconcilePremoves(nextFen, newMoves) {
         matchmakingAttemptRef.current = null;
         matchmakingAbortControllerRef.current = null;
       }
+
+      setMatchmaking(false);
       setGameStatus('Game search cancelled');
     } catch (error) {
       if (matchmakingAttemptRef.current === attemptId) {
         matchmakingAttemptRef.current = null;
         matchmakingAbortControllerRef.current = null;
       }
+
       setMatchmaking(false);
       setGameStatus(error.message);
     } finally {
       setCancellingMatchmaking(false);
     }
   }
+
   function handleLogin() {
     window.location.assign(
       '/api/auth/lichess',

@@ -274,12 +274,22 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
             awaitingMatchAttemptId = message.attemptId;
             return;
           }
-
           if (message.type === 'matchmaking.cancel') {
-            if (message.attemptId === awaitingMatchAttemptId) {
-              cancelLichessSeek(sessionKey, message.attemptId);
-              awaitingMatchAttemptId = null;
+            if (
+              typeof message.attemptId !== 'string' ||
+              message.attemptId !== awaitingMatchAttemptId
+            ) {
+              return;
             }
+
+            cancelLichessSeek(sessionKey, message.attemptId);
+            awaitingMatchAttemptId = null;
+
+            send(socket, {
+              type: 'matchmaking.cancelled',
+              attemptId: message.attemptId,
+            });
+
             return;
           }
           if (message.type === 'game.resume') {

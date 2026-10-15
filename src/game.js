@@ -31,21 +31,34 @@ async function readNdjson(response, onMessage, signal) {
   let buffer = '';
 
   try {
-    while (!signal.aborted) {
+    while (!signal?.aborted) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
+
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
       for (const line of lines) {
+        if (signal?.aborted) break;
         parseNdjsonLine(line, onMessage);
       }
     }
 
-    parseNdjsonLine(buffer, onMessage);
+    if (!signal?.aborted) {
+      buffer += decoder.decode();
+      parseNdjsonLine(buffer, onMessage);
+    }
   } finally {
+    if (signal?.aborted) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The stream may already be closed.
+      }
+    }
+
     reader.releaseLock();
   }
 }
@@ -73,27 +86,50 @@ function isAllowedTimeControl(time, increment) {
 export function attachGameRoutes(app, getAccessToken, getSessionKey) {
   app.post('/api/game/start', async (request, response) => {
     const { time, increment, rated = false, attemptId } = request.body ?? {};
-    if (typeof attemptId !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(attemptId)) {
+
+    if (
+      typeof attemptId !== 'string' ||
+      !/^[a-zA-Z0-9_-]{16,128}$/.test(attemptId)
+    ) {
       response.status(400).json({ error: 'Invalid matchmaking attempt' });
       return;
     }
-    if (typeof rated !== 'boolean' || !isAllowedTimeControl(time, increment)) {
+
+    if (
+      typeof rated !== 'boolean' ||
+      !Number.isInteger(time) ||
+      !Number.isInteger(increment) ||
+      !isAllowedTimeControl(time, increment)
+    ) {
       response.status(400).json({ error: 'Invalid game settings' });
       return;
     }
+
     if (rated && time < 600) {
-      response.status(400).json({ error: 'Rated board API games must be Rapid or slower' });
+      response.status(400).json({
+        error: 'Rated board API games must be Rapid or slower',
+      });
       return;
     }
 
     const accessToken = getAccessToken(request);
     const sessionKey = getSessionKey(request);
+
     if (!accessToken || !sessionKey) {
       response.status(401).json({ error: 'Lichess login required' });
       return;
     }
-    if (activeSeeks.has(sessionKey)) {
-      response.status(409).json({ error: 'A game search is already active' });
+
+    const existingSeek = activeSeeks.get(sessionKey);
+
+    if (existingSeek) {
+      if (existingSeek.attemptId === attemptId) {
+        response.status(202).json({ status: 'searching' });
+      } else {
+        response.status(409).json({
+          error: 'A game search is already active',
+        });
+      }
       return;
     }
 
@@ -101,17 +137,18 @@ export function attachGameRoutes(app, getAccessToken, getSessionKey) {
       attemptId,
       controller: new AbortController(),
       id: null,
-      idPromise: null,
       params: { time, increment, rated },
       startedAt: Date.now(),
+      cancelRequested: false,
+      claimed: false,
+      streamFinished: false,
+      cleanupTimer: null,
     };
-    let resolveSeekId;
-    seek.idPromise = new Promise((resolve) => {
-      resolveSeekId = resolve;
-    });
+
     activeSeeks.set(sessionKey, seek);
 
     let seekResponse;
+
     try {
       seekResponse = await fetch(`${lichessUrl}/api/board/seek`, {
         method: 'POST',
@@ -127,43 +164,88 @@ export function attachGameRoutes(app, getAccessToken, getSessionKey) {
         }),
         signal: seek.controller.signal,
       });
-    } catch {
-      if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
-      if (seek.cancelRequested) {
-        response.status(202).json({ status: 'cancelled' });
+    } catch (error) {
+      if (activeSeeks.get(sessionKey) === seek) {
+        activeSeeks.delete(sessionKey);
+      }
+
+      if (seek.cancelRequested || seek.controller.signal.aborted) {
+        if (!response.headersSent) {
+          response.status(202).json({ status: 'cancelled' });
+        }
         return;
       }
-      response.status(502).json({ error: 'Unable to connect to Lichess' });
+
+      console.error('Unable to start Lichess seek:', error);
+
+      if (!response.headersSent) {
+        response.status(502).json({
+          error: 'Unable to connect to Lichess',
+        });
+      }
+      return;
+    }
+    if (
+      activeSeeks.get(sessionKey) !== seek ||
+      seek.cancelRequested ||
+      seek.controller.signal.aborted
+    ) {
+      if (seekResponse.body) {
+        await seekResponse.body.cancel().catch(() => {});
+      }
+
+      if (!response.headersSent) {
+        response.status(202).json({ status: 'cancelled' });
+      }
       return;
     }
 
     if (!seekResponse.ok) {
-      if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
-      const lichessError = formatLichessError(await seekResponse.text());
+      if (activeSeeks.get(sessionKey) === seek) {
+        activeSeeks.delete(sessionKey);
+      }
+
+      const lichessError = formatLichessError(
+        await seekResponse.text()
+      );
+
       const status = seekResponse.status === 403 ? 403 : 502;
+
       const message = seekResponse.status === 403
         ? 'Lichess denied gameplay permission. Log out and log in again to grant board:play.'
-        : `Unable to start a Lichess game search${lichessError ? `: ${lichessError}` : ''}`;
+        : `Unable to start a Lichess game search${
+            lichessError ? `: ${lichessError}` : ''
+          }`;
+
       response.status(status).json({ error: message });
       return;
     }
 
-    void readNdjson(seekResponse, (event) => {
-      if (typeof event.id === 'string') {
-        seek.id = event.id;
-        resolveSeekId(event.id);
-      }
-    }, seek.controller.signal)
+    void readNdjson(
+      seekResponse,
+      (event) => {
+        if (typeof event.id === 'string') {
+          seek.id = event.id;
+        }
+      },
+      seek.controller.signal
+    )
       .catch((error) => {
-        if (error.name !== 'AbortError') console.error('Lichess seek stream failed:', error);
+        if (!seek.controller.signal.aborted) {
+          console.error('Lichess seek stream failed:', error);
+        }
       })
       .finally(() => {
-        resolveSeekId(null);
-        if (activeSeeks.get(sessionKey) === seek && !seek.cancelRequested) {
-          const cleanup = setTimeout(() => {
-            if (activeSeeks.get(sessionKey) === seek) activeSeeks.delete(sessionKey);
-          }, 10_000);
-          cleanup.unref?.();
+        seek.streamFinished = true;
+
+        // Do not remove a newer seek or a seek that is still awaiting
+        // game-start handling.
+        if (
+          activeSeeks.get(sessionKey) === seek &&
+           (seek.cancelRequested || seek.claimed)
+        ) {
+
+           activeSeeks.delete(sessionKey);
         }
       });
 
@@ -173,31 +255,105 @@ export function attachGameRoutes(app, getAccessToken, getSessionKey) {
   app.post('/api/game/cancel', (request, response) => {
     const sessionKey = getSessionKey(request);
     const { attemptId } = request.body ?? {};
+
     if (!sessionKey) {
       response.status(401).json({ error: 'Lichess login required' });
       return;
     }
-    if (!cancelLichessSeek(sessionKey, attemptId)) {
-      response.status(404).json({ error: 'No matching active game search' });
+
+    if (
+      typeof attemptId !== 'string' ||
+      !/^[a-zA-Z0-9_-]{16,128}$/.test(attemptId)
+    ) {
+      response.status(400).json({ error: 'Invalid matchmaking attempt' });
       return;
     }
-    response.status(202).json({ status: 'cancelled' });
+
+    const seek = activeSeeks.get(sessionKey);
+
+    // No matching seek remains. This can happen when the WebSocket
+    // cancellation handler already cancelled it.
+    if (!seek) {
+      response.status(200).json({
+        status: 'already-ended',
+        attemptId,
+      });
+      return;
+    }
+
+    // Do not cancel a different matchmaking attempt.
+    if (seek.attemptId !== attemptId) {
+      response.status(409).json({
+        error: 'A different game search is active',
+      });
+      return;
+    }
+
+    if (seek.claimed) {
+      response.status(409).json({
+        error: 'Game search has already been claimed',
+      });
+      return;
+    }
+
+    cancelLichessSeek(sessionKey, attemptId);
+
+    response.status(200).json({
+      status: 'cancelled',
+      attemptId,
+    });
   });
 }
 
 export function claimLichessSeek(sessionKey, attemptId) {
   const seek = activeSeeks.get(sessionKey);
-  if (!seek || seek.cancelRequested || seek.attemptId !== attemptId) return false;
-  activeSeeks.delete(sessionKey);
+
+  if (
+    !seek ||
+    seek.cancelRequested ||
+    seek.claimed ||
+    seek.attemptId !== attemptId
+  ) {
+    return false;
+  }
+
+  seek.claimed = true;
+
+  if (seek.cleanupTimer) {
+    clearTimeout(seek.cleanupTimer);
+    seek.cleanupTimer = null;
+  }
+
+  if (activeSeeks.get(sessionKey) === seek) {
+    activeSeeks.delete(sessionKey);
+  }
+
+  // The game has been claimed. The seek stream is no longer needed.
+  seek.controller.abort();
+
   return true;
 }
 
 export function cancelLichessSeek(sessionKey, attemptId) {
   const seek = activeSeeks.get(sessionKey);
-  if (!seek || seek.attemptId !== attemptId) return false;
+
+  if (!seek || seek.attemptId !== attemptId || seek.claimed) {
+    return false;
+  }
+
   seek.cancelRequested = true;
+
+  if (seek.cleanupTimer) {
+    clearTimeout(seek.cleanupTimer);
+    seek.cleanupTimer = null;
+  }
+
   seek.controller.abort();
-  activeSeeks.delete(sessionKey);
+
+  if (activeSeeks.get(sessionKey) === seek) {
+    activeSeeks.delete(sessionKey);
+  }
+
   return true;
 }
 
@@ -303,11 +459,23 @@ export async function acceptLichessChallenge(accessToken, challengeId, color = '
 }
 
 
-export function cancelAllLichessSeeks(sessionKey) { //for the user with the sessionKey
+export function cancelAllLichessSeeks(sessionKey) {
   const seek = activeSeeks.get(sessionKey);
+
   if (!seek) return false;
+
   seek.cancelRequested = true;
+
+  if (seek.cleanupTimer) {
+    clearTimeout(seek.cleanupTimer);
+    seek.cleanupTimer = null;
+  }
+
   seek.controller.abort();
-  activeSeeks.delete(sessionKey);
+
+  if (activeSeeks.get(sessionKey) === seek) {
+    activeSeeks.delete(sessionKey);
+  }
+
   return true;
 }

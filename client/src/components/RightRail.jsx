@@ -351,7 +351,7 @@ export default function RightRail({
             getSkinFolderForColor={getSkinFolderForColor}
           />
         )
-      ) : (
+      ) : phase=== 'searching' ? <p>Searching for a game...</p> : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}
