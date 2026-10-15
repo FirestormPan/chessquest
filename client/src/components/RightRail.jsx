@@ -34,6 +34,8 @@ export default function RightRail({
   playerColor,
   gameStatus,
   onPlayBot,
+  botGameEnded, 
+  onPlayAgain,
 
   // skins
   skinFolders,
@@ -82,6 +84,8 @@ export default function RightRail({
   takebackPending,
   gameRated,
   onTakeback,
+
+  confirmResign,
 
   onBotPlayerColorChange,
   onBotTakeback,
@@ -249,36 +253,56 @@ export default function RightRail({
       <>
         <div className="bot-game-info" aria-label="Bot game">
           <span className="chat-kicker">Practice</span>
-          <h2>{botActive ? 'Playing vs Bot' : 'Bot game'}</h2>
-          {botActive ? (
+
+          <h2>
+            {botGameEnded
+              ? 'Game Over'
+              : botActive
+                ? 'Playing vs Bot'
+                : 'Bot game'}
+          </h2>
+
+          {botGameEnded ? (
+            <p>{gameStatus}</p>
+          ) : botActive ? (
             <>
               <p>Estimated strength: ~{botStrength}</p>
               <p>You play: {playerColor === 'w' ? 'White' : 'Black'}</p>
             </>
           ) : (
-            <p>{gameStatus || 'No bot game in progress.'}</p>
+            <p>No bot game in progress.</p>
           )}
         </div>
-
-        {botActive && (
           <div className="game-actions" aria-label="Bot game actions">
-            <button
-              className="account-button"
-              type="button"
-              onClick={onBotTakeback}
-              disabled={!canBotTakeback}
-            >
-              Takeback
-            </button>
-            <button
-              className="account-button danger"
-              type="button"
-              onClick={onResign}
-            >
-              Resign
-            </button>
+            {botGameEnded ? (
+              <button
+                className="account-button"
+                type="button"
+                onClick={onPlayAgain}
+              >
+                Play Again
+              </button>
+            ) : botActive ? (
+              <>
+                <button
+                  className="account-button"
+                  type="button"
+                  onClick={onBotTakeback}
+                  disabled={!canBotTakeback}
+                >
+                  Takeback
+                </button>
+
+                <button
+                  className="account-button danger"
+                  type="button"
+                  onClick={onResign}
+                >
+                  {confirmResign ? 'Sure?' : 'Resign'}
+                </button>
+              </>
+            ) : null}
           </div>
-        )}
 
         <div className="chat-panel" aria-label="Move history">
           <div className="chat-header">
@@ -365,7 +389,6 @@ export default function RightRail({
             <span className="chat-kicker">Lichess</span>
             <h2>{view === 'history' ? 'Move history' : 'Game chat'}</h2>
           </div>
-          <br />
           <div className="chat-header-actions">
             <button
               className="account-button secondary"

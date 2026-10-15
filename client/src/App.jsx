@@ -63,6 +63,10 @@ function App() {
 
   const playerColorRef = useRef(null);
   const gameIdRef = useRef(null);
+
+  const [confirmResign, setConfirmResign] = useState(false);
+
+  const [botGameEnded, setBotGameEnded] = useState(false);  
   const botGameEndedRef = useRef(false);
   const botSearchControllerRef = useRef(null);
 
@@ -226,10 +230,28 @@ function App() {
   const capabilities = useMemo(() => getCapabilities(gameMode), [gameMode]);
 
   const phase = useMemo(() => {
-    if (matchmaking) return GAME_PHASE.SEARCHING;
-    if (gameId|| botActive) return GAME_PHASE.PLAYING;
+    if (matchmaking) {
+      return GAME_PHASE.SEARCHING;
+    }
+
+    if (gameMode === GAME_MODE.BOT) {
+      return botActive && !botGameEnded
+        ? GAME_PHASE.PLAYING
+        : GAME_PHASE.IDLE;
+    }
+
+    if (gameId) {
+      return GAME_PHASE.PLAYING;
+    }
+
     return GAME_PHASE.IDLE;
-  }, [matchmaking, gameId, botActive]);
+  }, [
+    matchmaking,
+    gameId,
+    gameMode,
+    botActive,
+    botGameEnded,
+  ]);
 
   const checkedSquare = getCheckedKingSquare(boardFen);
 
@@ -595,19 +617,24 @@ function reconcilePremoves(nextFen, newMoves) {
 }
 
   function handleResign() {
+    // First click: request confirmation
+    if (!confirmResign) {
+      setConfirmResign(true);
+      return;
+    }
+
+    // Second click: execute resignation
     if (gameMode === GAME_MODE.BOT) {
       if (!botActive) return;
-      if (!window.confirm('Resign this bot game?')) return;
 
       botSearchControllerRef.current?.abort();
+
       botGameEndedRef.current = true;
-      setGameStatus('You resigned.');
+      setGameStatus('You resigned. Bot wins.');
+      setBotActive(false);
+      setBotGameEnded(true);
+      setConfirmResign(false);
 
-      resetForNewGame();
-
-      window.setTimeout(() => {
-        window.alert('You resigned. Bot wins.');
-      }, 0);
       return;
     }
 
@@ -617,10 +644,7 @@ function reconcilePremoves(nextFen, newMoves) {
       !currentGameId ||
       socketRef.current?.readyState !== WebSocket.OPEN
     ) {
-      return;
-    }
-
-    if (!window.confirm('Resign this game?')) {
+      setConfirmResign(false);
       return;
     }
 
@@ -632,6 +656,7 @@ function reconcilePremoves(nextFen, newMoves) {
     );
 
     setGameStatus('Resigning game...');
+    setConfirmResign(false);
   }
 
   function handleDraw() {
@@ -736,7 +761,7 @@ function reconcilePremoves(nextFen, newMoves) {
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return undefined;
     if (!botActive) return undefined;
-
+    
     const humanColor = playerColorRef.current;
     if (!humanColor) return undefined;
 
@@ -799,6 +824,7 @@ function reconcilePremoves(nextFen, newMoves) {
       }
     };
   }, [fen, gameMode, botActive, botStrength]);
+ 
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return undefined;
     if (!botActive) return undefined;
@@ -808,6 +834,8 @@ function reconcilePremoves(nextFen, newMoves) {
     if (!chess.isGameOver()) return undefined;
 
     botGameEndedRef.current = true;
+    setBotGameEnded(true);
+    setBotActive(false)
 
     let message = 'Game over.';
     if (chess.isCheckmate()) {
@@ -1560,6 +1588,8 @@ function reconcilePremoves(nextFen, newMoves) {
     takebackPendingRef.current = false;
     setTakebackPending(false);
     setTakebackOffer(false);
+
+    setConfirmResign(false);
   }
 
   async function handleCancel() {
@@ -1701,6 +1731,13 @@ function reconcilePremoves(nextFen, newMoves) {
 
     setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
     setRightRailView('game');
+
+    setBotGameEnded(false);
+  }
+
+  function handlePlayAgain() {
+    resetForNewGame();
+    setRightRailView('bot');
   }
 
   function handleBotTakeback() {
@@ -2670,6 +2707,7 @@ function reconcilePremoves(nextFen, newMoves) {
           botActive={botActive}
           botStrength={botStrength}
           onBotStrengthChange={setBotStrength}
+          botGameEnded={botGameEnded}
           playerColor={playerColor}
           gameStatus={gameStatus}
           skinFolders={skinFolders}
@@ -2688,6 +2726,7 @@ function reconcilePremoves(nextFen, newMoves) {
           drawPending={drawPending}
           onDraw={handleDraw}
           onResign={handleResign}
+          confirmResign={confirmResign}
           opponentGone={opponentGone}
           claimPending={claimPending}
           claimWinInSeconds={claimWinInSeconds}
@@ -2701,6 +2740,7 @@ function reconcilePremoves(nextFen, newMoves) {
             botActive && uciHistory.length > (playerColor === 'b' ? 1 : 0)
           }
           onPlayBot={handlePlayBot}
+          onPlayAgain={handlePlayAgain}
           botPlayerColor={botPlayerColor}
           onBotPlayerColorChange={setBotPlayerColor}
           botColorMode={botColorMode}
@@ -2727,6 +2767,7 @@ function reconcilePremoves(nextFen, newMoves) {
           takebackPending={takebackPending}
           gameRated={gameRated}
           onTakeback={handleTakeback}
+
         />
       </aside>
     </main>
