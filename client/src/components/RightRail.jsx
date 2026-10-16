@@ -21,18 +21,15 @@ export default function RightRail({
   getSkinFolderForColor,
   selectedTimeControl,
   setSelectedTimeControl,
-  matchmaking,
   gameId,
 
   // bot
-  botStrength = 1000,
-  onBotStrengthChange,
-  botColorMode = 'w',
+  botGame,
   onBotColorModeChange,
+  onBotStrengthChange,
   playerColor,
   gameStatus,
   onPlayBot,
-  botStatus,
   onPlayAgain,
 
   // skins
@@ -87,6 +84,11 @@ export default function RightRail({
   onBotTakeback,
   canBotTakeback
 }) {
+  const {
+    status: botStatus,
+    strength: botStrength,
+    colorMode: botColorMode,
+  } = botGame;
   if(view === 'info') {
     return (
       <div className="game-info" aria-label="Game information">
@@ -351,11 +353,11 @@ export default function RightRail({
             getSkinFolderForColor={getSkinFolderForColor}
           />
         )
-      ) : phase=== 'searching' ? <p>Searching for a game...</p> : (
+      ) : phase=== GAME_PHASE.SEARCHING ? <p>Searching for a game...</p> : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}
-          disabled={matchmaking || Boolean(gameId)}
+          disabled={phase !== GAME_PHASE.IDLE}
         />
       )}
 
@@ -372,7 +374,7 @@ export default function RightRail({
 
       <GameActions
         socketReady={socketReady}
-        matchmaking={matchmaking}
+        phase={phase} 
         cancellingMatchmaking={cancellingMatchmaking}
         gameId={gameId}
         onPlay={onPlay}

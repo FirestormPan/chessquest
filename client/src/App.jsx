@@ -78,9 +78,9 @@ function App() {
 
   const premoveQueueRef = useRef([]);
   const premoveSendingRef = useRef(false);
-  const matchmakingStartPromiseRef = useRef(null);
+
   const matchmakingAttemptRef = useRef(null);
-  const matchmakingAbortControllerRef = useRef(null);
+  
 
 
   const [takebackOffer, setTakebackOffer] = useState(false);    // opponent offered
@@ -167,11 +167,22 @@ function App() {
   const [premoveQueue, setPremoveQueue] = useState([]);
   const [premovesEnabled, setPremovesEnabled] = useState(true);
 
-const [botStatus, setBotStatus] = useState('idle');  
   const botSearchControllerRef = useRef(null);
-  const [botStrength, setBotStrength] = useState(1000);
-  const [botPlayerColor, setBotPlayerColor] = useState('w');
-  const [botColorMode, setBotColorMode] = useState('w');
+  const [botGame, setBotGame] = useState({
+    status: 'idle',        // 'idle' | 'playing' | 'ended'
+    strength: 1000,
+    colorMode: 'w',        // 'w' | 'b' | 'random' — the *preference*
+    playerColor: 'w',      // 'w' | 'b' — the *resolved* color, only meaningful when status !== 'idle'
+  });
+
+  function resetBot() {
+    setBotGame((current) => ({
+      ...current,           // keep preferences
+      status: 'idle',
+      playerColor: 'w',     // or whatever default
+    }));
+  }
+
 
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
@@ -229,27 +240,13 @@ const [botStatus, setBotStatus] = useState('idle');
   const capabilities = useMemo(() => getCapabilities(gameMode), [gameMode]);
 
   const phase = useMemo(() => {
-    if (matchmaking) {
-      return GAME_PHASE.SEARCHING;
-    }
-
+    if (matchmaking) return GAME_PHASE.SEARCHING;
     if (gameMode === GAME_MODE.BOT) {
-      return botStatus === 'playing'
-        ? GAME_PHASE.PLAYING
-        : GAME_PHASE.IDLE;
+      return botGame.status === 'playing' ? GAME_PHASE.PLAYING : GAME_PHASE.IDLE;
     }
-
-    if (gameId) {
-      return GAME_PHASE.PLAYING;
-    }
-
+    if (gameId) return GAME_PHASE.PLAYING;
     return GAME_PHASE.IDLE;
-  }, [
-    matchmaking,
-    gameId,
-    gameMode,
-    botStatus
-  ]);
+  }, [matchmaking, gameId, gameMode, botGame.status]);
 
   const checkedSquare = getCheckedKingSquare(boardFen);
 
@@ -341,16 +338,15 @@ const [botStatus, setBotStatus] = useState('idle');
 
     setSelectedSkinFolder(folder);
   }
-
   function handleBotColorModeChange(mode) {
-    setBotColorMode(mode);
-
-    if (mode === 'random') {
-      setBotPlayerColor(Math.random() < 0.5 ? 'w' : 'b');
-      return;
-    }
-
-    setBotPlayerColor(mode);
+    setBotGame((current) => ({
+      ...current,
+      colorMode: mode,
+      playerColor:
+        mode === 'random'
+          ? (Math.random() < 0.5 ? 'w' : 'b')
+          : mode,
+    }));
   }
 
   function clearSelection() {
@@ -621,11 +617,11 @@ function reconcilePremoves(nextFen, newMoves) {
     }
 
     if (gameMode === GAME_MODE.BOT) {
-      if (botStatus !== 'playing') return;
+      if (botGame.status !== 'playing') return;
 
       botSearchControllerRef.current?.abort();
 
-      setBotStatus('ended');
+      setBotGame((current) => ({ ...current, status: 'ended' }))
       setGameStatus('You resigned. Bot wins.');
       setConfirmResign(false);
 
@@ -755,7 +751,7 @@ function reconcilePremoves(nextFen, newMoves) {
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return undefined;
     
-    if (botStatus !== 'playing') return undefined;
+    if (botGame.status !== 'playing') return undefined;
 
     const humanColor = playerColorRef.current;
     if (!humanColor) return undefined;
@@ -772,7 +768,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     const timer = window.setTimeout(async () => {
       try {
-         const move = await getBotMove(requestFen, { strength: botStrength, signal: controller.signal });
+         const move = await getBotMove(requestFen, { strength: botGame.strength, signal: controller.signal });
 
           if (
             !move ||
@@ -817,11 +813,11 @@ function reconcilePremoves(nextFen, newMoves) {
         botSearchControllerRef.current = null;
       }
     };
-  }, [fen, gameMode, botStatus, botStrength]);
+  }, [fen, gameMode, botGame.status, botGame.strength]);
  
   useEffect(() => {
     if (gameMode !== GAME_MODE.BOT) return;
-    if (botStatus !== 'playing') return;
+    if (botGame.status !== 'playing') return;
 
     const chess = new Chess(fen);
 
@@ -847,9 +843,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
     botSearchControllerRef.current?.abort();
 
-    setBotStatus('ended');
+    setBotGame((current) => ({ ...current, status: 'ended' }))
     setGameStatus(message);
-  }, [fen, gameMode, botStatus]);
+  },[fen, gameMode, botGame.status]);
 
   useEffect(() => {
     premoveQueueRef.current = premoveQueue;
@@ -1066,7 +1062,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
       if (payload.type === 'game.found') {
         matchmakingAttemptRef.current = null;
-        matchmakingAbortControllerRef.current = null;
         gameIdRef.current = payload.gameId;
         setMatchmaking(false);
         setGameStatus('Opponent found, waiting for game details...');
@@ -1096,7 +1091,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
         if (payload.scope === 'matchmaking') {
           matchmakingAttemptRef.current = null;
-          matchmakingAbortControllerRef.current = null;
           setMatchmaking(false);
         }
         setGameStatus(payload.message);
@@ -1297,8 +1291,6 @@ function reconcilePremoves(nextFen, newMoves) {
         }
 
         return;
-
-        return;
       }
 
         if (
@@ -1452,14 +1444,11 @@ function reconcilePremoves(nextFen, newMoves) {
       setSocketReady(false);
 
       clearPremoves();
-      matchmakingAbortControllerRef.current?.abort();
-      matchmakingAbortControllerRef.current = null;
+      matchmakingAttemptRef.current?.abortController?.abort();
       matchmakingAttemptRef.current = null;
       setMatchmaking(false);
 
-      setGameStatus(
-        'Game server disconnected',
-      );
+      setGameStatus('Game server disconnected');
     };
 
     return () => {
@@ -1491,13 +1480,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
     const attemptId = crypto.randomUUID();
     const abortController = new AbortController();
-    matchmakingAttemptRef.current = attemptId;
-    matchmakingAbortControllerRef.current = abortController;
-
-    resetForNewGame();
-    socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
-    setMatchmaking(true);
-    setGameStatus('Searching for an opponent...');
 
     const startPromise = fetch('/api/game/start', {
       method: 'POST',
@@ -1507,25 +1489,26 @@ function reconcilePremoves(nextFen, newMoves) {
       signal: abortController.signal,
     }).then(async (response) => ({ response, data: await response.json() }));
 
-    matchmakingStartPromiseRef.current = startPromise;
+    matchmakingAttemptRef.current = { id: attemptId, promise: startPromise, abortController };
+
+    resetForNewGame();
+    socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
+    setMatchmaking(true);
+    setGameStatus('Searching for an opponent...');
 
     try {
       const { response, data } = await startPromise;
       if (!response.ok) throw new Error(data.error ?? 'Unable to start game search');
     } catch (error) {
       socketRef.current?.send(JSON.stringify({ type: 'matchmaking.cancel', attemptId }));
-      if (matchmakingAttemptRef.current === attemptId) {
+      if (matchmakingAttemptRef.current?.id === attemptId) {
         matchmakingAttemptRef.current = null;
-        matchmakingAbortControllerRef.current = null;
         setMatchmaking(false);
         if (error.name !== 'AbortError') setGameStatus(error.message);
       }
-    } finally {
-      if (matchmakingStartPromiseRef.current === startPromise) {
-        matchmakingStartPromiseRef.current = null;
-      }
     }
   }
+
   function resetForNewGame() {
     botSearchControllerRef.current?.abort();
     clearPremoves();
@@ -1542,7 +1525,7 @@ function reconcilePremoves(nextFen, newMoves) {
     gameIdRef.current = null;
     moveCountRef.current = 0;
 
-    setBotStatus('idle');
+    resetBot()
     setConfirmResign(false);
 
     drawPendingRef.current = false;
@@ -1583,8 +1566,9 @@ function reconcilePremoves(nextFen, newMoves) {
   }
 
   async function handleCancel() {
-      const attemptId = matchmakingAttemptRef.current;
-    if (!attemptId) return;
+    const attempt = matchmakingAttemptRef.current;
+    if (!attempt) return;
+    const attemptId = attempt.id;
 
     socketRef.current?.send(
       JSON.stringify({ type: 'matchmaking.cancel', attemptId })
@@ -1592,18 +1576,16 @@ function reconcilePremoves(nextFen, newMoves) {
     setCancellingMatchmaking(true);
 
     try {
-      const pendingStart = matchmakingStartPromiseRef.current;
-
-      if (pendingStart) {
+      if (attempt.promise) {
         try {
-          await pendingStart;
+          await attempt.promise;
         } catch {
           // The start handler reports its own error.
         }
       }
 
       // The attempt may have changed while awaiting the start request.
-      if (matchmakingAttemptRef.current !== attemptId) {
+      if (matchmakingAttemptRef.current?.id !== attemptId) {
         return;
       }
 
@@ -1612,7 +1594,6 @@ function reconcilePremoves(nextFen, newMoves) {
         setMatchmaking(false);
         setGameStatus('Game found');
         matchmakingAttemptRef.current = null;
-        matchmakingAbortControllerRef.current = null;
         return;
       }
 
@@ -1626,16 +1607,14 @@ function reconcilePremoves(nextFen, newMoves) {
       const data = await response.json().catch(() => ({}));
 
       if (response.status === 404) {
-        // The seek may already have been claimed or removed.
         if (gameIdRef.current) {
           setGameStatus('Game found');
         } else {
           setGameStatus('Game search is no longer active');
         }
 
-        if (matchmakingAttemptRef.current === attemptId) {
+        if (matchmakingAttemptRef.current?.id === attemptId) {
           matchmakingAttemptRef.current = null;
-          matchmakingAbortControllerRef.current = null;
         }
 
         setMatchmaking(false);
@@ -1646,17 +1625,15 @@ function reconcilePremoves(nextFen, newMoves) {
         throw new Error(data.error ?? 'Unable to cancel game search');
       }
 
-      if (matchmakingAttemptRef.current === attemptId) {
+      if (matchmakingAttemptRef.current?.id === attemptId) {
         matchmakingAttemptRef.current = null;
-        matchmakingAbortControllerRef.current = null;
       }
 
       setMatchmaking(false);
       setGameStatus('Game search cancelled');
     } catch (error) {
-      if (matchmakingAttemptRef.current === attemptId) {
+      if (matchmakingAttemptRef.current?.id === attemptId) {
         matchmakingAttemptRef.current = null;
-        matchmakingAbortControllerRef.current = null;
       }
 
       setMatchmaking(false);
@@ -1693,7 +1670,7 @@ function reconcilePremoves(nextFen, newMoves) {
       setClaimWinInSeconds(null);
       setClaimPending(false);
 
-      setBotStatus('idle');
+      resetBot()
       setConfirmResign(false);
 
       setAccount(null);
@@ -1704,11 +1681,9 @@ function reconcilePremoves(nextFen, newMoves) {
 
   function handlePlayBot() {
     const humanColor =
-      botColorMode === 'random'
+      botGame.colorMode === 'random'
         ? (Math.random() < 0.5 ? 'w' : 'b')
-        : botPlayerColor;
-
-    setBotPlayerColor(humanColor);
+        : botGame.colorMode;
 
     botSearchControllerRef.current?.abort();
     clearPremoves();
@@ -1719,15 +1694,21 @@ function reconcilePremoves(nextFen, newMoves) {
     fenRef.current = startFen;
     setFen(startFen);
 
-    gameStartFenRef .current = startFen;
-    playerColorRef.current = botPlayerColor;
+    gameStartFenRef.current = startFen;
+    playerColorRef.current = humanColor;
     gameIdRef.current = null;
     moveCountRef.current = 0;
     drawPendingRef.current = false;
 
     setGameId(null);
     setGameMode(GAME_MODE.BOT);
-    setPlayerColor(botPlayerColor);
+    setPlayerColor(humanColor);
+
+    setBotGame((current) => ({
+      ...current,
+      status: 'playing',
+      playerColor: humanColor,
+    }));
 
 
     setCapturedPieces({ w: [], b: [] });
@@ -1753,10 +1734,8 @@ function reconcilePremoves(nextFen, newMoves) {
     setClaimWinInSeconds(null);
     setClaimPending(false);
 
-    setGameStatus(`Playing vs Bot (~${botStrength}, estimated)`);
+    setGameStatus(`Playing vs Bot (~${botGame.strength}, estimated)`);
     setRightRailView('game');
-
-    setBotStatus('playing');
   }
 
   function handlePlayAgain() {
@@ -1766,7 +1745,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
   function handleBotTakeback() {
     if (gameMode !== GAME_MODE.BOT) return;
-    if (botStatus !== 'playing') return;    
+    if (botGame.status !== 'playing') return;    
 
     const currentGame = new Chess(fenRef.current);
     if (currentGame.isGameOver()) return;
@@ -2415,6 +2394,10 @@ function reconcilePremoves(nextFen, newMoves) {
     }
   }
 
+  function handleBotStrengthChange(strength) {
+    setBotGame((current) => ({ ...current, strength }));
+  }
+
   function trySendOnlineMove(
     from,
     to,
@@ -2528,7 +2511,7 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            disabled={botStatus === 'playing'}
+            disabled={botGame.status === 'playing'}
             onClick={() => setRightRailView('game')}
           >
             VS Player
@@ -2537,7 +2520,7 @@ function reconcilePremoves(nextFen, newMoves) {
           <button
             className="account-button secondary"
             type="button"
-            onClick={() => setRightRailView(botStatus === 'playing' ? 'game' : 'bot')}
+            onClick={() => setRightRailView(botGame.status === 'playing' ? 'game' : 'bot')}
           >
             Vs Bot
           </button>
@@ -2736,11 +2719,10 @@ function reconcilePremoves(nextFen, newMoves) {
           getSkinFolderForColor={getSkinFolderForColor}
           selectedTimeControl={selectedTimeControl}
           setSelectedTimeControl={setSelectedTimeControl}
-          matchmaking={matchmaking}
           gameId={gameId}
-          botStatus={botStatus}
-          botStrength={botStrength}
-          onBotStrengthChange={setBotStrength}
+
+          botGame={botGame}
+          onBotStrengthChange={handleBotStrengthChange}
           playerColor={playerColor}
           gameStatus={gameStatus}
           skinFolders={skinFolders}
@@ -2770,13 +2752,11 @@ function reconcilePremoves(nextFen, newMoves) {
 
           onBotTakeback={handleBotTakeback}
           canBotTakeback={
-            botStatus === 'playing' && uciHistory.length > (playerColor === 'b' ? 1 : 0)
+            botGame.status === 'playing' && uciHistory.length > (playerColor === 'b' ? 1 : 0)
           }
           onPlayBot={handlePlayBot}
           onPlayAgain={handlePlayAgain}
-          botPlayerColor={botPlayerColor}
-          onBotPlayerColorChange={setBotPlayerColor}
-          botColorMode={botColorMode}
+
           onBotColorModeChange={handleBotColorModeChange}
           chatMessages={chatMessages}
           chatText={chatText}

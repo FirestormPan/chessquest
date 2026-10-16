@@ -1,11 +1,14 @@
+import { GAME_PHASE } from '../gameMode';
+
 export default function GameActions({
   socketReady,
-  matchmaking,
   cancellingMatchmaking,
   gameId,
   onPlay,
   onCancel,
 
+  phase,
+  
   drawOffer,
   drawPending,
   onDraw,
@@ -28,18 +31,14 @@ export default function GameActions({
       {!gameId && (
         <button
           className="account-button"
-          type="button"
-          onClick={matchmaking ? onCancel : onPlay}
-          disabled={
-            !socketReady ||
-            cancellingMatchmaking
-          }
+          onClick={phase === GAME_PHASE.SEARCHING ? onCancel : onPlay}
+          disabled={!socketReady || cancellingMatchmaking}
         >
           {!socketReady
             ? 'Connect to play'
             : cancellingMatchmaking
               ? 'Cancelling...'
-              : matchmaking
+              : phase === GAME_PHASE.SEARCHING
                 ? 'Cancel'
                 : 'Play'}
         </button>
