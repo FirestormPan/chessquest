@@ -77,8 +77,6 @@ function App() {
   const premoveSendingRef = useRef(false);
 
   const matchmakingAttemptRef = useRef(null);
-  
-
 
   const [takebackOffer, setTakebackOffer] = useState(false);    // opponent offered
   const [takebackPending, setTakebackPending] = useState(false); // we offered
@@ -98,8 +96,7 @@ function App() {
   const [gameId, setGameId] = useState(null);
   const [gameMode, setGameMode] = useState(GAME_MODE.LOCAL);
   const [matchmaking, setMatchmaking] = useState(false);
-  const [cancellingMatchmaking, setCancellingMatchmaking] =
-    useState(false);
+  const [cancellingMatchmaking, setCancellingMatchmaking] = useState(false);
   const [gameStatus, setGameStatus] = useState('');
 
   const [arrows, setArrows] = useState([]);
@@ -176,7 +173,6 @@ function App() {
       status: 'idle',
     }));
   }
-
 
   const [reviewPly, setReviewPly] = useState(null);
   const totalPlies = uciHistory.length;
@@ -2464,7 +2460,12 @@ function reconcilePremoves(nextFen, newMoves) {
             className="account-button secondary"
             type="button"
             disabled={botGame.status === 'playing'}
-            onClick={() => setRightRailView('game')}
+            onClick={() => {
+              if (gameMode === GAME_MODE.BOT && botGame.status === 'ended') {
+                resetForNewGame();
+              }
+              setRightRailView('game');
+            }}
           >
             VS Player
           </button>
