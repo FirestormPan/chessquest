@@ -17,9 +17,11 @@ const pieceNames = {
 export default function PieceVisual({ color, type, skinFolder, className = '' }) {
   const [failedImagePath, setFailedImagePath] = useState(null);
 
+  const typeClass = `piece-${type}`;
+
   if (!skinFolder) {
     return (
-      <span className={className}>
+      <span className={`${typeClass} ${className}`}>
         {pieceSymbols[color][type]}
       </span>
     );
@@ -30,14 +32,14 @@ export default function PieceVisual({ color, type, skinFolder, className = '' })
 
   return hasImage ? (
     <img
-      className={`piece-image ${className}`}
+      className={`piece-image ${typeClass} ${className}`}
       src={imagePath}
       alt=""
       draggable="false"
       onError={() => setFailedImagePath(imagePath)}
     />
   ) : (
-    <span className={className}>
+    <span className={`${typeClass} ${className}`}>
       {pieceSymbols[color][type]}
     </span>
   );

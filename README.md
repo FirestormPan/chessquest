@@ -29,3 +29,7 @@ Send a move as JSON:
 The local practice bot bundles Stockfish.js 10.0.2 under GPL-3.0. Its upstream
 source is https://github.com/niklasf/stockfish.js, and its license is included
 at `client/bot-engine/LICENSE.txt`.
+
+
+## Images
+When adding a new skin, images should be square (n x n) and the edges of the png-image should be relatively close to the image depiction(actual content).

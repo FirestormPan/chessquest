@@ -724,11 +724,50 @@ h1 {
 
 .capture-pieces { display: flex; flex-wrap: wrap; gap: 0.05rem 0.2rem; min-height: 1.35rem; }
 .captured-piece { color: var(--parchment); font-family: Georgia, serif; font-size: 1.35rem; line-height: 1; }
-.piece-image { display: block; height: 1em; object-fit: contain; pointer-events: none; user-select: none; width: 1em; }
-.piece > .piece-image { height: 1.1em; width: 1.1em; }
-.promotion-piece { color: var(--ink); font-family: Georgia, serif; font-size: clamp(1.4rem, 3vw, 2.2rem); line-height: 1; }
-.capture-empty { color: var(--ink-faint); font-family: 'IM Fell English SC', serif; font-size: 0.72rem; letter-spacing: 0.06em; }
+.piece-image {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
 
+.piece-image.piece-p {
+  height: 80%;
+  width: 80%;
+}
+
+.piece {
+  align-items: center;
+  color: #1a1208;
+  cursor: grab;
+  display: flex;
+  font-family: Georgia, serif;
+  height: 110%;
+  justify-content: center;
+  line-height: 1;
+  touch-action: none;
+  user-select: none;
+  width: 110%;
+}
+
+/* Unicode fallback when skins are unavailable */
+.piece > span {
+  font-size: clamp(2rem, 6vw, 4rem);
+  line-height: 1;
+}
+
+.piece:active,
+.piece.is-dragging {
+  cursor: grabbing;
+  opacity: 0.55;
+}
+
+.piece:focus-visible {
+  outline: 3px solid var(--brass-bright);
+  outline-offset: 4px;
+}
 /* ---------- Clocks ---------- */
 
 .clock-panel { display: flex; flex-direction: column; gap: 0.55rem; }
@@ -905,19 +944,17 @@ h1 {
   color: #1a1208;
   cursor: grab;
   font-family: Georgia, serif;
-  font-size: clamp(2.3rem, 8vw, 5.5rem);
+  display: flex;
+  height: 105%;
+  width: 105%;
+  justify-content: center;
   line-height: 1;
   touch-action: none;
   user-select: none;
 }
 
 .dragged-piece {
-  position: fixed;
-  pointer-events: none;
-  z-index: 100;
-  transform: translate(-50%, -50%);
-  left: 0;
-  top: 0;
+  align-items: center;
   background: radial-gradient(
     circle,
     rgba(201, 162, 74, 0.75) 0%,
@@ -925,6 +962,27 @@ h1 {
     rgba(201, 162, 74, 0.1) 50%,
     rgba(201, 162, 74, 0) 80%
   );
+  display: flex;
+  height: var(--drag-size, 4rem);
+  justify-content: center;
+  left: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: var(--drag-size, 4rem);
+  z-index: 100;
+}
+
+.dragged-piece .piece-image {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+
+.dragged-piece.piece-p .piece-image {
+  height: 80%;
+  width: 80%;
 }
 
 .piece:active, .piece.is-dragging { cursor: grabbing; opacity: 0.55; }
