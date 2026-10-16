@@ -52,7 +52,6 @@ function getPromotionLabel(pieceType) {
   return promotionNames[pieceType] ?? pieceType;
 }
 
-
 function App() {
   const socketRef = useRef(null);
 
@@ -65,8 +64,6 @@ function App() {
   const gameIdRef = useRef(null);
 
   const [confirmResign, setConfirmResign] = useState(false);
-
-
 
   const moveCountRef = useRef(0);
   const lastClickRef = useRef({ square: null, time: 0 });
@@ -93,7 +90,6 @@ function App() {
   const [moveAnimation, setMoveAnimation] = useState(null);
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalMoves, setLegalMoves] = useState([]);
-  const [draggingSquare, setDraggingSquare] = useState(null);
   const [pointerDrag, setPointerDrag] = useState(null);
 
   const [account, setAccount] = useState(null);
@@ -172,14 +168,12 @@ function App() {
     status: 'idle',        // 'idle' | 'playing' | 'ended'
     strength: 1000,
     colorMode: 'w',        // 'w' | 'b' | 'random' — the *preference*
-    playerColor: 'w',      // 'w' | 'b' — the *resolved* color, only meaningful when status !== 'idle'
   });
 
   function resetBot() {
     setBotGame((current) => ({
       ...current,           // keep preferences
       status: 'idle',
-      playerColor: 'w',     // or whatever default
     }));
   }
 
@@ -220,11 +214,11 @@ function App() {
 
   const reviewFen = useMemo(() => {
     if (reviewPly == null) return null;
-    if (!gameStartFenRef .current) return null;
+    if (!gameStartFenRef.current) return null;
 
     try {
       return applyMoves(
-        gameStartFenRef .current,
+        gameStartFenRef.current,
         uciHistory.slice(0, reviewPly),
       );
     } catch {
@@ -260,10 +254,6 @@ function App() {
 
     return { from: move.slice(0, 2), to: move.slice(2, 4) };
   }, [reviewPly, uciHistory, lastMove]);
-
-
-  const [rematchAvailable, setRematchAvailable] = useState(false);
-  const [rematchChallenge, setRematchChallenge] = useState(null);
 
   const boardFiles = useMemo(
     () => (playerColor === 'b' ? [...files].reverse() : files),
@@ -339,14 +329,7 @@ function App() {
     setSelectedSkinFolder(folder);
   }
   function handleBotColorModeChange(mode) {
-    setBotGame((current) => ({
-      ...current,
-      colorMode: mode,
-      playerColor:
-        mode === 'random'
-          ? (Math.random() < 0.5 ? 'w' : 'b')
-          : mode,
-    }));
+    setBotGame((current) => ({ ...current, colorMode: mode }));
   }
 
   function clearSelection() {
@@ -417,7 +400,7 @@ function App() {
       setArrows([]);
     }
 
-    const baseFen = gameStartFenRef .current;
+    const baseFen = gameStartFenRef.current;
 
     const lastUciMove = uciMoves[uciMoves.length - 1];
 
@@ -1024,9 +1007,7 @@ function reconcilePremoves(nextFen, newMoves) {
     }
 
     const protocol =
-      window.location.protocol === 'https:'
-        ? 'wss'
-        : 'ws';
+      window.location.protocol === 'https:' ? 'wss' : 'ws';
 
     const socket = new WebSocket(
       `${protocol}://${window.location.host}/ws`,
@@ -1198,7 +1179,7 @@ function reconcilePremoves(nextFen, newMoves) {
       if (event.type === 'gameFull') {
         const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
 
-        gameStartFenRef .current = event.initialFen;
+        gameStartFenRef.current = event.initialFen;
 
         localStorage.setItem('chessquest:active-game', event.id);
 
@@ -1281,8 +1262,6 @@ function reconcilePremoves(nextFen, newMoves) {
           gameIdRef.current = null;
           setGameId(null);
 
-          moveCountRef.current = 0;
-
           setGameMode(GAME_MODE.LOCAL);
 
           setArrows([]);
@@ -1295,10 +1274,10 @@ function reconcilePremoves(nextFen, newMoves) {
 
         if (
         event.type === 'gameState' &&
-        gameStartFenRef .current
+        gameStartFenRef.current
       ) {
         const nextFen = applyMoves(
-          gameStartFenRef .current,
+          gameStartFenRef.current,
           event.moves,
         );
 
@@ -1520,7 +1499,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setCapturedPieces({ w: [], b: [] });
     setClockSnapshot(null);
 
-    gameStartFenRef .current = null;
+    gameStartFenRef.current = null;
     playerColorRef.current = null;
     gameIdRef.current = null;
     moveCountRef.current = 0;
@@ -1659,7 +1638,7 @@ function reconcilePremoves(nextFen, newMoves) {
       clearPremoves();
 
       gameIdRef.current = null;
-      gameStartFenRef .current = null;
+      gameStartFenRef.current = null;
       playerColorRef.current = null;
 
       setGameId(null);
@@ -1707,7 +1686,6 @@ function reconcilePremoves(nextFen, newMoves) {
     setBotGame((current) => ({
       ...current,
       status: 'playing',
-      playerColor: humanColor,
     }));
 
 
@@ -1973,8 +1951,8 @@ function reconcilePremoves(nextFen, newMoves) {
        * no server-provided initial FEN. Set it lazily on the
        * first move so commitPosition has a base to replay from.
        */
-      if (!gameStartFenRef .current) {
-        gameStartFenRef .current = currentFen;
+      if (!gameStartFenRef.current) {
+        gameStartFenRef.current = currentFen;
       }
 
       const uci =
@@ -2175,7 +2153,6 @@ function reconcilePremoves(nextFen, newMoves) {
       piece,
     });
 
-    setDraggingSquare(square);
     selectSquare(square);
   }
 
@@ -2283,7 +2260,6 @@ function reconcilePremoves(nextFen, newMoves) {
     }
 
     setPointerDrag(null);
-    setDraggingSquare(null);
 
     window.setTimeout(() => {
       suppressPieceClickRef.current = false;
@@ -2359,36 +2335,12 @@ function reconcilePremoves(nextFen, newMoves) {
     }
   }
 
-  function cancelLastPremove() {
-    /*
-     * Never remove the move currently waiting for
-     * server confirmation. Doing so would leave the
-     * sending lock without a corresponding queue entry.
-     */
-    if (premoveSendingRef.current) {
-      return;
-    }
-
-    const queue =
-      premoveQueueRef.current;
-
-    if (!queue.length) {
-      return;
-    }
-
-    const nextQueue = queue.slice(0, -1);
-
-    premoveQueueRef.current = nextQueue;
-
-    setPremoveQueue(nextQueue);
-  }
 
   function handlePointerCancel(event) {
     if (isReviewing) return;
 
     if ( pointerDrag?.pointerId === event.pointerId ) {
       setPointerDrag(null);
-      setDraggingSquare(null);
       suppressPieceClickRef.current =
         false;
     }
@@ -2637,7 +2589,7 @@ function reconcilePremoves(nextFen, newMoves) {
                   selectedSquare={selectedSquare}
                   lastMove={boardLastMove}
                   legalMoves={legalMoves}
-                  draggingSquare={draggingSquare}
+                  draggingSquare={pointerDrag?.square ?? null}
                   onSquareClick={
                     handleSquareClick
                   }

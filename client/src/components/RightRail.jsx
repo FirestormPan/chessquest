@@ -93,12 +93,11 @@ export default function RightRail({
     return (
       <div className="game-info" aria-label="Game information">
         <span className="chat-kicker">Game Controls</span>
-        <p> Click on a piece to see all available moves. Then click on a destination square to make a move. Alternatively you may drag and drop a piece. <br /> <br />
-              Right click on a piece and drag to a destination square to draw planning Arrows. <br /> <br />
-              To make a pre-move just make a move while it is your opponent's turn. You can also make multiple pre-moves in a row.
-
+        <p> 
+          Click on a piece to see all available moves. Then click on a destination square to make a move. Alternatively you may drag and drop a piece. <br /> <br />
+          Right click on a piece and drag to a destination square to draw planning Arrows. <br /> <br />
+          To make a pre-move just make a move while it is your opponent's turn. You can also make multiple pre-moves in a row. Double click on a piece to cancel all pre-moves. <br /> <br />
         </p>
-        
       </div>
     );
   }
