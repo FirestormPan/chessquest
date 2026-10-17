@@ -121,7 +121,22 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     maxPayload: 16 * 1024,
   });
 
+
+  const interval = setInterval(() => {
+    webSocketServer.clients.forEach((ws) => {
+      if (ws.isAlive === false) return ws.terminate();
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000); 
+
+  webSocketServer.on('close', () => {
+    clearInterval(interval);
+  });
+
   webSocketServer.on('connection', (socket, request) => {
+    socket.isAlive = true;
+    socket.on('pong', () => { socket.isAlive = true; })
     if (!isAllowedOrigin(request.headers.origin)) {
       socket.close(1008, 'Untrusted origin');
       return;

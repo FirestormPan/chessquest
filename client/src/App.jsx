@@ -999,443 +999,407 @@ function reconcilePremoves(nextFen, newMoves) {
       return undefined;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    let reconnectTimeout;
 
-    const isProd = import.meta.env.PROD; 
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const isProd = import.meta.env.PROD;
+      const socketHost = isProd ? 'chessquest-30a1.onrender.com' : window.location.host;
+      
+      const socket = new WebSocket(`${protocol}://${socketHost}/ws`);
+      socketRef.current = socket;
 
-    const socketHost = isProd 
-      ? 'chessquest-30a1.onrender.com' //Todo: put this as a project variable
-      : window.location.host;
-
-    const socket = new WebSocket(
-      `${protocol}://${socketHost}/ws`,
-    );
-
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      if (socketRef.current !== socket) return;
-
-      setSocketReady(true);
-      setGameStatus('Connected to game server');
-
-      const activeGame = localStorage.getItem('chessquest:active-game');
+      socket.onopen = () => {
+        if (socketRef.current !== socket) return;
+        setSocketReady(true);
+        setGameStatus('Connected to game server');
+        
+        const activeGame = localStorage.getItem('chessquest:active-game');
         if (activeGame) {
           socket.send(JSON.stringify({ type: 'game.resume' }));
         }
-    };
+      };
 
-    socket.onmessage = (message) => {
-      if (socketRef.current !== socket) return;
+      socket.onmessage = (message) => {
+        if (socketRef.current !== socket) return;
 
-      let payload;
+        let payload;
 
-      try {
-        payload = JSON.parse(message.data);
-      } catch {
-        setGameStatus(
-          'Received an invalid message from the game server',
-        );
-        return;
-      }
-
-      if (payload.type === 'game.found') {
-        matchmakingAttemptRef.current = null;
-        gameIdRef.current = payload.gameId;
-        setMatchmaking(false);
-        setGameStatus('Opponent found, waiting for game details...');
-        return;
-      }
-
-      if (payload.type === 'error') {
-        if (payload.scope === 'chat') {
-          setChatError(payload.message);
+        try {
+          payload = JSON.parse(message.data);
+        } catch {
+          setGameStatus(
+            'Received an invalid message from the game server',
+          );
+          return;
         }
 
-        /*
-         * A rejected game.move must release the premove
-         * sending lock. Do not clear premoves for unrelated
-         * errors such as chat/draw errors.
-         */
-        if (payload.scope === 'game.move') {
-          clearPremoves();
-        }
-
-        if (
-          payload.message === 'Draw request was rejected'
-        ) {
-          drawPendingRef.current = false;
-          setDrawPending(false);
-        }
-
-        if (payload.scope === 'matchmaking') {
+        if (payload.type === 'game.found') {
           matchmakingAttemptRef.current = null;
+          gameIdRef.current = payload.gameId;
           setMatchmaking(false);
-        }
-        setGameStatus(payload.message);
-
-        return;
-      }
-
-      if (payload.type === 'game.draw.result') {
-        if (!payload.ok) {
-          drawPendingRef.current = false;
-          setDrawPending(false);
-
-          setGameStatus(
-            payload.message ??
-              'Draw request was rejected',
-          );
+          setGameStatus('Opponent found, waiting for game details...');
+          return;
         }
 
-        return;
-      }
-
-      if (payload.type === 'game.takeback.result') {
-        if (!payload.ok) {
-          takebackPendingRef.current = false;
-          setTakebackPending(false);
-          setGameStatus(payload.message ?? 'Takeback request was rejected');
-        }
-        return;
-      }
-
-      if (payload.type === 'game.claimVictory.result') {
-        if (!payload.ok) {
-          setClaimPending(false);
-          setGameStatus(
-            payload.message ?? 'Claim was rejected by Lichess',
-          );
-        }
-        // On success, wait for the follow-up gameState
-        // (status: 'timeout') to end the game and reset state.
-        return;
-      }
-
-      if (payload.type === 'game.chat.error') {
-        setChatError(payload.message);
-        return;
-      }
-
-      if (payload.type === 'game.chat.sent') {
-        setChatMessages((current) => {
-          const alreadyShown = current.some(
-            (message) =>
-              message.room === payload.room &&
-              message.username ===
-                account.username &&
-              message.text === payload.text,
-          );
-
-          return alreadyShown
-            ? current
-            : [
-                ...current,
-                {
-                  room: payload.room,
-                  username: account.username,
-                  text: payload.text,
-                },
-              ];
-        });
-
-        return;
-      }
-
-      if (payload.type !== 'game.event') {
-        return;
-      }
-
-      const event = payload.event;
-
-      if (event.type === 'opponentGone') {
-        setOpponentGone(Boolean(event.gone));
-        setClaimWinInSeconds(
-          typeof event.claimWinInSeconds === 'number'
-            ? event.claimWinInSeconds
-            : null,
-        );
-        return;
-      }
-      if (event.type === 'chatLine') {
-        setChatMessages((current) => {
-          const alreadyShown = current.some(
-            (message) =>
-              message.room === event.room &&
-              message.username === event.username &&
-              message.text === event.text,
-          );
-
-          return alreadyShown
-            ? current
-            : [...current, event];
-        });
-
-        return;
-      }
-
-      if (event.type === 'gameFull') {
-        const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
-
-        gameStartFenRef.current = event.initialFen;
-
-        localStorage.setItem('chessquest:active-game', event.id);
-
-        const nextFen = applyMoves(
-          event.initialFen,
-          event.state.moves,
-        );
-
-        const moves = parseUciMoves(
-          event.state.moves,
-        );
-
-        moveCountRef.current = moves.length;
-
-        playerColorRef.current = color;
-        setPlayerColor(color);
-
-        gameIdRef.current = event.id;
-        setGameId(event.id);
-        setGameRated(Boolean(event.rated));
-
-        setGameMode(GAME_MODE.LICHESS);
-        setMatchmaking(false);
-        setGameStatus('Game in progress');
-
-        setOpponentGone(false);
-        setClaimWinInSeconds(null);
-        setClaimPending(false);
-
-        setDrawOffer(false);
-        drawPendingRef.current = false;
-        setDrawPending(false);
-
-        setChatMessages(
-          Array.isArray(event.chat) ? event.chat : [],
-        );
-
-        setChatError('');
-
-        commitPosition(nextFen, {
-          uciMoves: moves,
-          clearArrows: true,
-        });
-
-        setClockSnapshot({
-          wtime: clockValue(
-            event.state.wtime,
-          ),
-          btime: clockValue(
-            event.state.btime,
-          ),
-          winc:
-            clockValue(
-              event.clock?.increment,
-            ) ?? 0,
-          binc:
-            clockValue(
-              event.clock?.increment,
-            ) ?? 0,
-          turn: new Chess(nextFen).turn(),
-          status: event.state.status,
-          updatedAt: Date.now(),
-        });
-
-        if (event.state.status !== 'started') {
-          const result = describeGameResult(
-            { winner: undefined, status: event.state.status },
-            { playerColor: color },
-          );
-
-          setChatMessages((current) => [
-            ...current,
-            { room: 'system', username: '', text: result },
-          ]);
-
-          setGameStatus(result);
-
-          localStorage.removeItem('chessquest:active-game');
-
-          gameIdRef.current = null;
-          setGameId(null);
-
-          setGameMode(GAME_MODE.LOCAL);
-
-          setArrows([]);
-          clearSelection();
-          clearPremoves();
-        }
-
-        return;
-      }
-
-        if (
-        event.type === 'gameState' &&
-        gameStartFenRef.current
-      ) {
-        const nextFen = applyMoves(
-          gameStartFenRef.current,
-          event.moves,
-        );
-
-        const moves = parseUciMoves(
-          event.moves,
-        );
-
-        const newMoves = moves.slice(
-          moveCountRef.current,
-        );
-
-        const moveWasMade = newMoves.length > 0;
-
-        moveCountRef.current = moves.length;
-
-        const ownDrawOffer =
-          playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
-
-        const opponentDrawOffer =
-          playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
-
-        const ownTakebackOffer =
-          playerColorRef.current === 'w' ? event.wtakeback : event.btakeback;
-        const opponentTakebackOffer =
-          playerColorRef.current === 'w' ? event.btakeback : event.wtakeback;
-
-        if (moveWasMade) {
-          takebackPendingRef.current = false;
-          setTakebackPending(false);
-          setTakebackOffer(false);
-        } else {
-          setDrawOffer(Boolean(opponentDrawOffer));
-          drawPendingRef.current = Boolean(ownDrawOffer);
-          setDrawPending(Boolean(ownDrawOffer));
-
-          setTakebackOffer(Boolean(opponentTakebackOffer));
-          takebackPendingRef.current = Boolean(ownTakebackOffer);
-          setTakebackPending(Boolean(ownTakebackOffer));
-        }
-
-        /*
-         * Single write path for the position and its derived
-         * state. Replaces the previous hand-rolled updates to
-         * fenRef, fen, uciHistory, moveHistory, lastMove,
-         * capturedPieces, arrows, and reviewPly.
-         */
-        commitPosition(nextFen, {
-          uciMoves: moves,
-          clearArrows: newMoves.length > 0,
-        });
-
-        const gameEnded = event.status !== 'started';
-
-        if (gameEnded) {
-          clearSelection();
-          clearPremoves();
-        } else {
-          reconcilePremoves(
-            nextFen,
-            newMoves,
-          );
-        }
-
-        if (!gameEnded && selectedSquareRef.current) {
-          const updatedMoves =
-            getLegalMovesForPiece(
-              nextFen,
-              selectedSquareRef.current,
-            );
-
-          if (updatedMoves.length > 0) {
-            setLegalMoves(
-              updatedMoves.map(
-                (move) => move.to,
-              ),
-            );
-          } else {
-            clearSelection();
+        if (payload.type === 'error') {
+          if (payload.scope === 'chat') {
+            setChatError(payload.message);
           }
+
+          if (payload.scope === 'game.move') {
+            clearPremoves();
+          }
+
+          if (
+            payload.message === 'Draw request was rejected'
+          ) {
+            drawPendingRef.current = false;
+            setDrawPending(false);
+          }
+
+          if (payload.scope === 'matchmaking') {
+            matchmakingAttemptRef.current = null;
+            setMatchmaking(false);
+          }
+          setGameStatus(payload.message);
+
+          return;
         }
 
-        setClockSnapshot((current) => ({
-          ...current,
-          wtime: clockValue(event.wtime),
-          btime: clockValue(event.btime),
-          turn: new Chess(nextFen).turn(),
-          status: event.status,
-          updatedAt: Date.now(),
-        }));
+        if (payload.type === 'game.draw.result') {
+          if (!payload.ok) {
+            drawPendingRef.current = false;
+            setDrawPending(false);
 
-        if (gameEnded) {
+            setGameStatus(
+              payload.message ??
+                'Draw request was rejected',
+            );
+          }
 
-          const result = describeGameResult(event, {
-            playerColor: playerColorRef.current,
+          return;
+        }
+
+        if (payload.type === 'game.takeback.result') {
+          if (!payload.ok) {
+            takebackPendingRef.current = false;
+            setTakebackPending(false);
+            setGameStatus(payload.message ?? 'Takeback request was rejected');
+          }
+          return;
+        }
+
+        if (payload.type === 'game.claimVictory.result') {
+          if (!payload.ok) {
+            setClaimPending(false);
+            setGameStatus(
+              payload.message ?? 'Claim was rejected by Lichess',
+            );
+          }
+          return;
+        }
+
+        if (payload.type === 'game.chat.error') {
+          setChatError(payload.message);
+          return;
+        }
+
+        if (payload.type === 'game.chat.sent') {
+          setChatMessages((current) => {
+            const alreadyShown = current.some(
+              (message) =>
+                message.room === payload.room &&
+                message.username === account.username &&
+                message.text === payload.text,
+            );
+
+            return alreadyShown
+              ? current
+              : [
+                  ...current,
+                  {
+                    room: payload.room,
+                    username: account.username,
+                    text: payload.text,
+                  },
+                ];
           });
 
-          setChatMessages((current) => [
-            ...current,
-            {
-              room: 'system',
-              username: '',
-              text: result,
-            },
-          ]);
+          return;
+        }
 
+        if (payload.type !== 'game.event') {
+          return;
+        }
 
-          setGameStatus(result);
+        const event = payload.event;
 
-          localStorage.removeItem('chessquest:active-game');
+        if (event.type === 'opponentGone') {
+          setOpponentGone(Boolean(event.gone));
+          setClaimWinInSeconds(
+            typeof event.claimWinInSeconds === 'number'
+              ? event.claimWinInSeconds
+              : null,
+          );
+          return;
+        }
+        
+        if (event.type === 'chatLine') {
+          setChatMessages((current) => {
+            const alreadyShown = current.some(
+              (message) =>
+                message.room === event.room &&
+                message.username === event.username &&
+                message.text === event.text,
+            );
+
+            return alreadyShown
+              ? current
+              : [...current, event];
+          });
+
+          return;
+        }
+
+        if (event.type === 'gameFull') {
+          const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
+
+          gameStartFenRef.current = event.initialFen;
+
+          localStorage.setItem('chessquest:active-game', event.id);
+
+          const nextFen = applyMoves(
+            event.initialFen,
+            event.state.moves,
+          );
+
+          const moves = parseUciMoves(
+            event.state.moves,
+          );
+
+          moveCountRef.current = moves.length;
+
+          playerColorRef.current = color;
+          setPlayerColor(color);
+
+          gameIdRef.current = event.id;
+          setGameId(event.id);
+          setGameRated(Boolean(event.rated));
+
+          setGameMode(GAME_MODE.LICHESS);
+          setMatchmaking(false);
+          setGameStatus('Game in progress');
 
           setOpponentGone(false);
           setClaimWinInSeconds(null);
           setClaimPending(false);
 
-          gameIdRef.current = null;
-          setGameId(null);
+          setDrawOffer(false);
+          drawPendingRef.current = false;
+          setDrawPending(false);
 
-          moveCountRef.current = 0;
+          setChatMessages(
+            Array.isArray(event.chat) ? event.chat : [],
+          );
 
-          setGameMode(GAME_MODE.LOCAL);
+          setChatError('');
 
-          setArrows([]);
-          clearSelection();
-          clearPremoves();
+          commitPosition(nextFen, {
+            uciMoves: moves,
+            clearArrows: true,
+          });
+
+          setClockSnapshot({
+            wtime: clockValue(event.state.wtime),
+            btime: clockValue(event.state.btime),
+            winc: clockValue(event.clock?.increment) ?? 0,
+            binc: clockValue(event.clock?.increment) ?? 0,
+            turn: new Chess(nextFen).turn(),
+            status: event.state.status,
+            updatedAt: Date.now(),
+          });
+
+          if (event.state.status !== 'started') {
+            const result = describeGameResult(
+              { winner: undefined, status: event.state.status },
+              { playerColor: color },
+            );
+
+            setChatMessages((current) => [
+              ...current,
+              { room: 'system', username: '', text: result },
+            ]);
+
+            setGameStatus(result);
+
+            localStorage.removeItem('chessquest:active-game');
+
+            gameIdRef.current = null;
+            setGameId(null);
+
+            setGameMode(GAME_MODE.LOCAL);
+
+            setArrows([]);
+            clearSelection();
+            clearPremoves();
+          }
+
+          return;
         }
-      }
-    };
 
-    socket.onerror = () => {
-      if (socketRef.current === socket) {
-        setGameStatus(
-          'Game server connection failed',
-        );
-      }
-    };
+        if (event.type === 'gameState' && gameStartFenRef.current) {
+          const nextFen = applyMoves(
+            gameStartFenRef.current,
+            event.moves,
+          );
 
-    socket.onclose = () => {
-      if (socketRef.current !== socket) {
-        return;
-      }
+          const moves = parseUciMoves(
+            event.moves,
+          );
 
-      socketRef.current = null;
-      setSocketReady(false);
+          const newMoves = moves.slice(
+            moveCountRef.current,
+          );
 
-      clearPremoves();
-      matchmakingAttemptRef.current?.abortController?.abort();
-      matchmakingAttemptRef.current = null;
-      setMatchmaking(false);
+          const moveWasMade = newMoves.length > 0;
 
-      setGameStatus('Game server disconnected');
-    };
+          moveCountRef.current = moves.length;
+
+          const ownDrawOffer =
+            playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
+
+          const opponentDrawOffer =
+            playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
+
+          const ownTakebackOffer =
+            playerColorRef.current === 'w' ? event.wtakeback : event.btakeback;
+          const opponentTakebackOffer =
+            playerColorRef.current === 'w' ? event.btakeback : event.wtakeback;
+
+          if (moveWasMade) {
+            takebackPendingRef.current = false;
+            setTakebackPending(false);
+            setTakebackOffer(false);
+          } else {
+            setDrawOffer(Boolean(opponentDrawOffer));
+            drawPendingRef.current = Boolean(ownDrawOffer);
+            setDrawPending(Boolean(ownDrawOffer));
+
+            setTakebackOffer(Boolean(opponentTakebackOffer));
+            takebackPendingRef.current = Boolean(ownTakebackOffer);
+            setTakebackPending(Boolean(ownTakebackOffer));
+          }
+
+          commitPosition(nextFen, {
+            uciMoves: moves,
+            clearArrows: newMoves.length > 0,
+          });
+
+          const gameEnded = event.status !== 'started';
+
+          if (gameEnded) {
+            clearSelection();
+            clearPremoves();
+          } else {
+            reconcilePremoves(
+              nextFen,
+              newMoves,
+            );
+          }
+
+          if (!gameEnded && selectedSquareRef.current) {
+            const updatedMoves =
+              getLegalMovesForPiece(
+                nextFen,
+                selectedSquareRef.current,
+              );
+
+            if (updatedMoves.length > 0) {
+              setLegalMoves(
+                updatedMoves.map(
+                  (move) => move.to,
+                ),
+              );
+            } else {
+              clearSelection();
+            }
+          }
+
+          setClockSnapshot((current) => ({
+            ...current,
+            wtime: clockValue(event.wtime),
+            btime: clockValue(event.btime),
+            turn: new Chess(nextFen).turn(),
+            status: event.status,
+            updatedAt: Date.now(),
+          }));
+
+          if (gameEnded) {
+            const result = describeGameResult(event, {
+              playerColor: playerColorRef.current,
+            });
+
+            setChatMessages((current) => [
+              ...current,
+              {
+                room: 'system',
+                username: '',
+                text: result,
+              },
+            ]);
+
+            setGameStatus(result);
+
+            localStorage.removeItem('chessquest:active-game');
+
+            setOpponentGone(false);
+            setClaimWinInSeconds(null);
+            setClaimPending(false);
+
+            gameIdRef.current = null;
+            setGameId(null);
+
+            moveCountRef.current = 0;
+
+            setGameMode(GAME_MODE.LOCAL);
+
+            setArrows([]);
+            clearSelection();
+            clearPremoves();
+          }
+        }
+      };
+
+      socket.onerror = () => {
+        if (socketRef.current === socket) {
+          setGameStatus(
+            'Game server connection failed',
+          );
+        }
+      };
+
+      socket.onclose = () => {
+        if (socketRef.current !== socket) return;
+        socketRef.current = null;
+        setSocketReady(false);
+        setGameStatus('Disconnected. Reconnecting...');
+        
+        // Auto-reconnect after 3 seconds
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+    }
+
+    connect();
 
     return () => {
+      clearTimeout(reconnectTimeout);
       setSocketReady(false);
 
-      if (socketRef.current === socket) {
+      if (socketRef.current) {
+        socketRef.current.close();
         socketRef.current = null;
       }
-
-      socket.close();
     };
   }, [account]);
 
