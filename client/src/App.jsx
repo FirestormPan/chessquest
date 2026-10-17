@@ -999,11 +999,16 @@ function reconcilePremoves(nextFen, newMoves) {
       return undefined;
     }
 
-    const protocol =
-      window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
+    const isProd = import.meta.env.PROD; 
+
+    const socketHost = isProd 
+      ? 'chessquest-30a1.onrender.com' //Todo: put this as a project variable
+      : window.location.host;
 
     const socket = new WebSocket(
-      `${protocol}://${window.location.host}/ws`,
+      `${protocol}://${socketHost}/ws`,
     );
 
     socketRef.current = socket;
