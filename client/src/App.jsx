@@ -125,8 +125,8 @@ function App() {
   const [rightRailView, setRightRailView] = useState('bot');
 
   const [skinFolders, setSkinFolders] = useState([]);
-  const [selectedSkinFolder, setSelectedSkinFolder] = useState('firefuckers');
-  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState('evil');
+  const [selectedSkinFolder, setSelectedSkinFolder] = useState('swordhaven');
+  const [selectedOpponentSkinFolder, setSelectedOpponentSkinFolder] = useState('shadowscythe');
   const [selectingOpponentSkin, setSelectingOpponentSkin] = useState(false);
 
   const [clockSnapshot, setClockSnapshot] = useState(null);

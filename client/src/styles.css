@@ -61,7 +61,7 @@ input:focus-visible {
   grid-template-columns: minmax(200px, 0.6fr) minmax(420px, 2fr) minmax(240px, 300px);
   min-height: 100vh;
   overflow: hidden;
-  padding: clamp(1.5rem, 5vw, 4rem);
+  padding:  1rem 3rem 1rem 3rem;
 }
 
 .intro-panel { max-width: 380px; }
@@ -631,7 +631,7 @@ h1 {
 
 /* ---------- Board panel ---------- */
 
-.board-panel { min-width: 0; width: min(100%, 900px); }
+.board-panel { min-width: 0; width: min(100%, 900px, 98vh); }
 .board-game-area { align-items: stretch; display: flex; }
 .right-rail { display: flex; flex-direction: column; gap: 1rem; min-width: 0; width: min(100%, 300px); }
 .right-rail .clock-panel { align-self: stretch; flex: 0 0 auto; }
@@ -665,7 +665,9 @@ h1 {
   flex: 1 1 auto;
   min-width: 0;
   overflow: visible;
-  padding: clamp(0.65rem, 1.5vw, 1rem);
+  padding: clamp(0.5rem, 1.5vw, 0.9rem);
+  padding-bottom: 0.3rem;
+  padding-left: 0.3rem;
 }
 
 .board-layout { display: flex; }
@@ -676,9 +678,9 @@ h1 {
   display: grid;
   flex: 0 0 1.05rem;
   font-family: 'IM Fell English SC', serif;
-  font-size: clamp(0.58rem, 1.1vw, 0.68rem);
+  font-size: clamp(0.8rem, 1.2vw, 0.8rem);
   grid-template-rows: repeat(8, 1fr);
-  padding-right: 0.4rem;
+  padding-right: 0.30rem;
   text-align: right;
 }
 
@@ -695,9 +697,9 @@ h1 {
   color: var(--ink-dim);
   display: grid;
   font-family: 'IM Fell English SC', serif;
-  font-size: clamp(0.58rem, 1.1vw, 0.68rem);
+  font-size: clamp(0.8rem, 1.2vw, 0.8rem);
   grid-template-columns: repeat(8, 1fr);
-  padding-top: 0.38rem;
+  padding-top: 0.30rem;
 }
 
 /* ---------- Captures ---------- */
