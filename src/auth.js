@@ -50,14 +50,14 @@ function getCookie(request, name) {
 function setSessionCookie(response, sessionId) {
   response.setHeader(
     'Set-Cookie',
-    `chessquest_session=${sessionId}; HttpOnly; SameSite=None; Path=/; Max-Age=86400`,
+    `chessquest_session=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`,
   );
 }
 
 function clearSessionCookie(response) {
   response.setHeader(
     'Set-Cookie',
-    'chessquest_session=; HttpOnly; SameSite=None; Path=/; Max-Age=0',
+    'chessquest_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0',
   );
 }
 
