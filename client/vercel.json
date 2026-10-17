@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://chessquest-30a1.onrender.com/api/:path*" },
+    { "source": "/ws", "destination": "https://chessquest-30a1.onrender.com/ws" }
+  ]
+}
