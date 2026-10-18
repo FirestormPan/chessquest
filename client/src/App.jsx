@@ -1037,9 +1037,7 @@ function reconcilePremoves(nextFen, newMoves) {
         try {
           payload = JSON.parse(message.data);
         } catch {
-          setGameStatus(
-            'Received an invalid message from the game server',
-          );
+           console.error("Failed to parse WS message:", message.data);
           return;
         }
 

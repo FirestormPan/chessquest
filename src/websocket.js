@@ -135,6 +135,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     clearInterval(interval);
   });
 
+  console.log("Origin received:", request.headers.origin, "Allowed:", allowedOrigin);
   webSocketServer.on('connection', (socket, request) => {
     console.log('WS CONNECTED:', request.headers.origin);
 
@@ -239,6 +240,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     });
 
     socket.on('message', (rawMessage) => {
+      console.log("RAW WS MESSAGE:", rawMessage.toString());
       const currentToken = getAccessToken(request);
       const currentSessionKey = getSessionKey(request);
       if (!currentToken || !currentSessionKey) {
