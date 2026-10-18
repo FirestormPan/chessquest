@@ -1005,10 +1005,11 @@ function reconcilePremoves(nextFen, newMoves) {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const isProd = import.meta.env.PROD;
       const socketHost = isProd ? 'chessquest-30a1.onrender.com' : window.location.host;
-      
       const socket = new WebSocket(`${protocol}://${socketHost}/ws`);
       socketRef.current = socket;
 
+      let heartbeatInterval;
+      
       socket.onopen = () => {
         if (socketRef.current !== socket) return;
         setSocketReady(true);
@@ -1018,6 +1019,12 @@ function reconcilePremoves(nextFen, newMoves) {
         if (activeGame) {
           socket.send(JSON.stringify({ type: 'game.resume' }));
         }
+
+        heartbeatInterval = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30000);
       };
 
       socket.onmessage = (message) => {
@@ -1388,6 +1395,8 @@ function reconcilePremoves(nextFen, newMoves) {
       };
 
       socket.onclose = () => {
+        clearInterval(heartbeatInterval);
+
         if (socketRef.current !== socket) return;
         socketRef.current = null;
         setSocketReady(false);

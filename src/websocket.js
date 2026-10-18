@@ -135,6 +135,8 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
   });
 
   webSocketServer.on('connection', (socket, request) => {
+    console.log('WS CONNECTED:', request.headers.origin);
+
     socket.isAlive = true;
     socket.on('pong', () => { socket.isAlive = true; })
     if (!isAllowedOrigin(request.headers.origin)) {
@@ -263,6 +265,11 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
 
         try {
           message = JSON.parse(rawMessage.toString());
+
+          if (message.type === 'ping') {
+            send(socket, { type: 'pong' });
+            return;
+          }
 
           if (message.type === 'matchmaking.start') {
             if (
@@ -523,6 +530,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     });
 
     socket.on('close', () => {
+      console.log('WS CLOSED:', code, reason.toString());
       if (awaitingMatchAttemptId) {
         cancelLichessSeek(sessionKey, awaitingMatchAttemptId);
       }
