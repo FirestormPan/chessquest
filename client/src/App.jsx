@@ -1009,7 +1009,7 @@ function reconcilePremoves(nextFen, newMoves) {
       socketRef.current = socket;
 
       let heartbeatInterval;
-      
+
       socket.onopen = () => {
         if (socketRef.current !== socket) return;
         setSocketReady(true);
@@ -1031,6 +1031,8 @@ function reconcilePremoves(nextFen, newMoves) {
         if (socketRef.current !== socket) return;
 
         let payload;
+
+        console.log("Received WS message:", payload);
 
         try {
           payload = JSON.parse(message.data);
@@ -1441,6 +1443,7 @@ function reconcilePremoves(nextFen, newMoves) {
 
     // 1. Send the matchmaking message FIRST while the socket is perfectly stable
     socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
+    console.log("Sent matchmaking.start");
     setMatchmaking(true);
     setGameStatus('Searching for an opponent...');
 

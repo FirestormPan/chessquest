@@ -52,6 +52,7 @@ async function maintainEventStream(accessToken, onEvent, signal, onLost) {
       onEvent(event);
     } catch (error) {
       console.error('Event handler threw:', error);
+      console.error("WS MESSAGE ERROR:", error);
     }
   };
 
@@ -162,6 +163,8 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     let commandCount = 0;
 
     maintainEventStream(accessToken, (event) => {
+       console.log("LICHESS EVENT:", event.type);
+
       // Handle incoming challenges
       if (event.type === 'challenge' && event.challenge) {
         const challenge = event.challenge;
@@ -201,6 +204,8 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       resumable = false;
       gameId = nextGameId;
       send(socket, { type: 'game.found', gameId });
+
+      console.log("SENT GAME.FOUND TO CLIENT");
 
       gameStreamController = new AbortController();
       maintainGameStream(
@@ -265,6 +270,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
 
         try {
           message = JSON.parse(rawMessage.toString());
+          console.log("WS MESSAGE FROM CLIENT:", message.type);
 
           if (message.type === 'ping') {
             send(socket, { type: 'pong' });
@@ -485,6 +491,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
             });
           }
         } catch {
+          console.error("WS MESSAGE ERROR:", error);
           if (commandController.signal.aborted) {
             if (message?.type === 'game.takeback') {
               send(socket, {
