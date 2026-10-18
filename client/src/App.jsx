@@ -1035,8 +1035,12 @@ function reconcilePremoves(nextFen, newMoves) {
         }
 
         if (payload.type === 'game.found') {
+
+          console.log("GAME FOUND VIA WS", payload);
+
           matchmakingAttemptRef.current = null;
           gameIdRef.current = payload.gameId;
+          setGameMode(GAME_MODE.LICHESS);
           setMatchmaking(false);
           setGameStatus('Opponent found, waiting for game details...');
           return;
@@ -1163,6 +1167,10 @@ function reconcilePremoves(nextFen, newMoves) {
         }
 
         if (event.type === 'gameFull') {
+
+
+          console.log("GAMEFULL RECEIVED", event);
+
           const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
 
           gameStartFenRef.current = event.initialFen;
@@ -1404,6 +1412,7 @@ function reconcilePremoves(nextFen, newMoves) {
   }, [account]);
 
   async function handleOnlinePlay() {
+    resetForNewGame();
     if (
       !socketReady ||
       socketRef.current?.readyState !== WebSocket.OPEN ||
@@ -1432,7 +1441,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
     matchmakingAttemptRef.current = { id: attemptId, promise: startPromise, abortController };
 
-    resetForNewGame();
     socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
     setMatchmaking(true);
     setGameStatus('Searching for an opponent...');
