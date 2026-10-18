@@ -1412,7 +1412,6 @@ function reconcilePremoves(nextFen, newMoves) {
   }, [account]);
 
   async function handleOnlinePlay() {
-    resetForNewGame();
     if (
       !socketReady ||
       socketRef.current?.readyState !== WebSocket.OPEN ||
@@ -1431,6 +1430,12 @@ function reconcilePremoves(nextFen, newMoves) {
     const attemptId = crypto.randomUUID();
     const abortController = new AbortController();
 
+    // 1. Send the matchmaking message FIRST while the socket is perfectly stable
+    socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
+    setMatchmaking(true);
+    setGameStatus('Searching for an opponent...');
+
+    // 2. Start the fetch
     const startPromise = fetch('/api/game/start', {
       method: 'POST',
       credentials: 'include',
@@ -1440,10 +1445,6 @@ function reconcilePremoves(nextFen, newMoves) {
     }).then(async (response) => ({ response, data: await response.json() }));
 
     matchmakingAttemptRef.current = { id: attemptId, promise: startPromise, abortController };
-
-    socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
-    setMatchmaking(true);
-    setGameStatus('Searching for an opponent...');
 
     try {
       const { response, data } = await startPromise;
