@@ -1005,7 +1005,14 @@ function reconcilePremoves(nextFen, newMoves) {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
       const isProd = import.meta.env.PROD;
       const socketHost = isProd ? 'chessquest-30a1.onrender.com' : window.location.host;
-      const socket = new WebSocket(`${protocol}://${socketHost}/ws`);
+
+      // Get the session cookie
+      const sessionId = document.cookie
+        .split('; ')
+        .find((row) => row.startsWith('chessquest_session='))
+        ?.split('=')[1];
+
+      const socket = new WebSocket(`${protocol}://${socketHost}/ws?sessionId=${sessionId || ''}`);
       socketRef.current = socket;
 
       let heartbeatInterval;
@@ -1032,14 +1039,15 @@ function reconcilePremoves(nextFen, newMoves) {
 
         let payload;
 
-        console.log("Received WS message:", payload);
-
         try {
           payload = JSON.parse(message.data);
         } catch {
-           console.error("Failed to parse WS message:", message.data);
+          console.error("Failed to parse WS message:", message.data);
+          setGameStatus('Received an invalid message from the game server');
           return;
         }
+
+        console.log("Received WS message:", payload);
 
         if (payload.type === 'game.found') {
 

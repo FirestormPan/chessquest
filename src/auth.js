@@ -50,19 +50,24 @@ function getCookie(request, name) {
 function setSessionCookie(response, sessionId) {
   response.setHeader(
     'Set-Cookie',
-    `chessquest_session=${sessionId}; HttpOnly; SameSite=None; Secure; Path=/; Max-Age=86400`,
+    `chessquest_session=${sessionId}; SameSite=None; Secure; Path=/; Max-Age=86400`,
   );
 }
 
 function clearSessionCookie(response) {
   response.setHeader(
     'Set-Cookie',
-    'chessquest_session=; HttpOnly; SameSite=None; Secure; Path=/; Max-Age=0',
+    'chessquest_session=; SameSite=None; Secure; Path=/; Max-Age=0',
   );
 }
 
 function getSession(request) {
-  const sessionId = getCookie(request, 'chessquest_session');
+  let sessionId = getCookie(request, 'chessquest_session');
+  // If no cookie, check the URL query string
+  if (!sessionId) {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    sessionId = url.searchParams.get('sessionId');
+  }
   return sessionId ? sessions.get(sessionId) : undefined;
 }
 
@@ -178,6 +183,12 @@ export function getAccessToken(request) {
 
 export function getSessionKey(request) {
   const sessionId = getCookie(request, 'chessquest_session');
+
+  if (!sessionId) {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    sessionId = url.searchParams.get('sessionId');
+  }
+  
   const session = sessionId ? sessions.get(sessionId) : undefined;
   return session && session.expiresAt >= Date.now() ? sessionId : null;
 }
