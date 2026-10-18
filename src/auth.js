@@ -182,13 +182,13 @@ export function getAccessToken(request) {
 }
 
 export function getSessionKey(request) {
-  const sessionId = getCookie(request, 'chessquest_session');
+  let sessionId = getCookie(request, 'chessquest_session');
 
   if (!sessionId) {
     const url = new URL(request.url, `http://${request.headers.host}`);
     sessionId = url.searchParams.get('sessionId');
   }
-  
+
   const session = sessionId ? sessions.get(sessionId) : undefined;
   return session && session.expiresAt >= Date.now() ? sessionId : null;
 }
