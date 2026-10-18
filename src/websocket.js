@@ -16,7 +16,6 @@ import {
 const MAX_BUFFERED_SOCKET_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 15_000;
 
-
 function send(socket, message) {
   if (socket.readyState !== WebSocket.OPEN) return;
   if (socket.bufferedAmount > MAX_BUFFERED_SOCKET_BYTES) {
@@ -52,7 +51,6 @@ async function maintainEventStream(accessToken, onEvent, signal, onLost) {
       onEvent(event);
     } catch (error) {
       console.error('Event handler threw:', error);
-      console.error("WS MESSAGE ERROR:", error);
     }
   };
 
@@ -122,7 +120,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     maxPayload: 16 * 1024,
   });
 
-
   const interval = setInterval(() => {
     webSocketServer.clients.forEach((ws) => {
       if (ws.isAlive === false) return ws.terminate();
@@ -135,12 +132,13 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     clearInterval(interval);
   });
 
-  console.log("Origin received:", request.headers.origin, "Allowed:", allowedOrigin);
   webSocketServer.on('connection', (socket, request) => {
     console.log('WS CONNECTED:', request.headers.origin);
+    console.log("Origin received:", request.headers.origin, "Allowed:", allowedOrigin); // <--- MOVED HERE
 
     socket.isAlive = true;
     socket.on('pong', () => { socket.isAlive = true; })
+    
     if (!isAllowedOrigin(request.headers.origin)) {
       socket.close(1008, 'Untrusted origin');
       return;
@@ -164,12 +162,10 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     let commandCount = 0;
 
     maintainEventStream(accessToken, (event) => {
-       console.log("LICHESS EVENT:", event.type);
+      console.log("LICHESS EVENT:", event.type);
 
-      // Handle incoming challenges
       if (event.type === 'challenge' && event.challenge) {
         const challenge = event.challenge;
-        // Only forward if it's a rematch of the current game
         if (challenge.rematchOf && challenge.rematchOf === gameId) {
           send(socket, {
             type: 'game.rematch.offered',
@@ -243,11 +239,13 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       console.log("RAW WS MESSAGE:", rawMessage.toString());
       const currentToken = getAccessToken(request);
       const currentSessionKey = getSessionKey(request);
+      
       if (!currentToken || !currentSessionKey) {
         send(socket, { type: 'error', message: 'Session expired. Please log in again.' });
         socket.close(1008, 'Session expired');
         return;
       }
+      
       accessToken = currentToken;
       sessionKey = currentSessionKey;
       
@@ -492,7 +490,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
               message: `Lichess rejected the move: ${await responseError(moveResponse)}`,
             });
           }
-        } catch {
+        } catch (error) { // <--- DECLARED error HERE
           console.error("WS MESSAGE ERROR:", error);
           if (commandController.signal.aborted) {
             if (message?.type === 'game.takeback') {
@@ -538,7 +536,7 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       });
     });
 
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => { 
       console.log('WS CLOSED:', code, reason.toString());
       if (awaitingMatchAttemptId) {
         cancelLichessSeek(sessionKey, awaitingMatchAttemptId);
