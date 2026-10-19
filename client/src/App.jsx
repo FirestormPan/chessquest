@@ -80,9 +80,13 @@ function App() {
 
   const matchmakingAttemptRef = useRef(null);
 
+  const prevDrawOfferRef = useRef(false);
+  const prevDrawPendingRef = useRef(false);
+
   const [takebackOffer, setTakebackOffer] = useState(false);    // opponent offered
   const [takebackPending, setTakebackPending] = useState(false); // we offered
   const takebackPendingRef = useRef(false);
+
   const [gameRated, setGameRated] = useState(false);
 
   const [fen, setFen] = useState(() => new Chess().fen());
@@ -299,11 +303,16 @@ function App() {
     clearSelection();
     closePromotionChoice();
   }
-
   function stepForward() {
     if (!canStepForward) return;
     const next = effectivePly + 1;
     setReviewPly(next === totalPlies ? null : next);
+    clearSelection();
+    closePromotionChoice();
+  }
+  function handleSelectPly(ply) {
+    // If the user clicks the last move, treat it as "Live" (null)
+    setReviewPly(ply === totalPlies ? null : ply);
     clearSelection();
     closePromotionChoice();
   }
@@ -1285,11 +1294,8 @@ function reconcilePremoves(nextFen, newMoves) {
 
           moveCountRef.current = moves.length;
 
-          const ownDrawOffer =
-            playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
-
-          const opponentDrawOffer =
-            playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
+          const ownDrawOffer = playerColorRef.current === 'w' ? event.wdraw : event.bdraw;
+          const opponentDrawOffer = playerColorRef.current === 'w' ? event.bdraw : event.wdraw;
 
           const ownTakebackOffer =
             playerColorRef.current === 'w' ? event.wtakeback : event.btakeback;
@@ -1429,6 +1435,48 @@ function reconcilePremoves(nextFen, newMoves) {
     };
   }, [account]);
 
+  useEffect(() => {
+    // Opponent offered
+    if (drawOffer && !prevDrawOfferRef.current) {
+      setChatMessages((current) => [
+        ...current,
+        { room: 'system', username: '', text: 'Opponent offers a draw.' },
+      ]);
+    }
+    // We offered
+    if (drawPending && !prevDrawPendingRef.current) {
+      setChatMessages((current) => [
+        ...current,
+        { room: 'system', username: '', text: 'You offered a draw.' },
+      ]);
+    }
+    // Our offer was declined or we withdrew
+    if (!drawPending && prevDrawPendingRef.current) {
+      // Only show declined if the game is still running
+      if (gameId && clockSnapshot?.status === 'started') {
+        setChatMessages((current) => [
+          ...current,
+          { room: 'system', username: '', text: 'Your draw offer was declined.' },
+        ]);
+      }
+    }
+    // Opponent withdrew or we declined
+    if (!drawOffer && prevDrawOfferRef.current) {
+      // Only say declined if the game didn't end
+      if (gameId) {
+        setChatMessages((current) => [
+          ...current,
+          { room: 'system', username: '', text: 'Draw offer declined or withdrawn.' },
+        ]);
+      }
+    }
+
+    // Update refs for next render
+    prevDrawOfferRef.current = drawOffer;
+    prevDrawPendingRef.current = drawPending;
+  }, [drawOffer, drawPending, gameId]);
+
+
   async function handleOnlinePlay() {
     if (
       !socketReady ||
@@ -1506,8 +1554,11 @@ function reconcilePremoves(nextFen, newMoves) {
     setPlayerColor(null);
 
     setLastMove(null);
+
     setDrawOffer(false);
     setDrawPending(false);
+    prevDrawOfferRef.current = false;
+    prevDrawPendingRef.current = false;
 
     setChatMessages([]);
     setChatText('');
@@ -1518,7 +1569,6 @@ function reconcilePremoves(nextFen, newMoves) {
     setUciHistory([]);
     setMoveHistory([]);
     setReviewPly(null);
-
     uciHistoryRef.current = [];
     setGameEndMessage(null);
 
@@ -1532,7 +1582,6 @@ function reconcilePremoves(nextFen, newMoves) {
     takebackPendingRef.current = false;
     setTakebackPending(false);
     setTakebackOffer(false);
-
   }
 
   async function handleCancel() {
@@ -2702,7 +2751,7 @@ function reconcilePremoves(nextFen, newMoves) {
           onClaimVictory={handleClaimVictory}
           moveHistory={moveHistory}
           reviewPly={reviewPly}
-          onSelectPly={setReviewPly}
+          onSelectPly={handleSelectPly}
 
           onBotTakeback={handleBotTakeback}
           canBotTakeback={
