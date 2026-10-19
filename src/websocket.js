@@ -133,9 +133,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
   });
 
   webSocketServer.on('connection', (socket, request) => {
-    console.log('WS CONNECTED:', request.headers.origin);
-    console.log("Origin received:", request.headers.origin, "Allowed:", allowedOrigin); // <--- MOVED HERE
-
     socket.isAlive = true;
     socket.on('pong', () => { socket.isAlive = true; })
     
@@ -162,8 +159,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     let commandCount = 0;
 
     maintainEventStream(accessToken, (event) => {
-      console.log("LICHESS EVENT:", event.type);
-
       if (event.type === 'challenge' && event.challenge) {
         const challenge = event.challenge;
         if (challenge.rematchOf && challenge.rematchOf === gameId) {
@@ -202,7 +197,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
       gameId = nextGameId;
       send(socket, { type: 'game.found', gameId });
 
-      console.log("SENT GAME.FOUND TO CLIENT");
 
       gameStreamController = new AbortController();
       maintainGameStream(
@@ -236,7 +230,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     });
 
     socket.on('message', (rawMessage) => {
-      console.log("RAW WS MESSAGE:", rawMessage.toString());
       const currentToken = getAccessToken(request);
       const currentSessionKey = getSessionKey(request);
       
@@ -270,7 +263,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
 
         try {
           message = JSON.parse(rawMessage.toString());
-          console.log("WS MESSAGE FROM CLIENT:", message.type);
 
           if (message.type === 'ping') {
             send(socket, { type: 'pong' });
@@ -537,7 +529,6 @@ export function attachWebSocketServer(server, getAccessToken, getSessionKey) {
     });
 
     socket.on('close', (code, reason) => { 
-      console.log('WS CLOSED:', code, reason.toString());
       if (awaitingMatchAttemptId) {
         cancelLichessSeek(sessionKey, awaitingMatchAttemptId);
       }

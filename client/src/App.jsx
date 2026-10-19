@@ -630,7 +630,6 @@ function reconcilePremoves(nextFen, newMoves) {
     setGameStatus('Resigning game...');
     setConfirmResign(false);
   }
-
   function handleDraw() {
     const currentGameId = gameIdRef.current;
 
@@ -641,7 +640,6 @@ function reconcilePremoves(nextFen, newMoves) {
       return;
     }
 
-    // Determine intent.
     const isAccepting = drawOffer;
     const isWithdrawing = drawPending && !drawOffer;
     const isOffering = !drawOffer && !drawPending;
@@ -651,26 +649,18 @@ function reconcilePremoves(nextFen, newMoves) {
         type: 'game.draw',
         gameId: currentGameId,
         accept: isAccepting,
-        // `withdraw` is a client hint; the backend treats
-        // accept:false the same way for Lichess.
         withdraw: isWithdrawing,
       }),
     );
 
+    // Instantly update the UI for the user
     if (isOffering || isWithdrawing) {
       drawPendingRef.current = isOffering;
       setDrawPending(isOffering);
     } else if (isAccepting) {
       setDrawOffer(false);
+      setDrawPending(true);
     }
-
-    setGameStatus(
-      isAccepting
-        ? 'Accepting draw…'
-        : isWithdrawing
-          ? 'Draw offer withdrawn'
-          : 'Draw offered',
-    );
   }
 
   function handleTakeback(action) {
@@ -1060,11 +1050,7 @@ function reconcilePremoves(nextFen, newMoves) {
           return;
         }
 
-        console.log("Received WS message:", payload);
-
         if (payload.type === 'game.found') {
-
-          console.log("GAME FOUND VIA WS", payload);
 
           matchmakingAttemptRef.current = null;
           gameIdRef.current = payload.gameId;
@@ -1195,9 +1181,6 @@ function reconcilePremoves(nextFen, newMoves) {
         }
 
         if (event.type === 'gameFull') {
-
-          console.log("GAMEFULL RECEIVED", event);
-
           const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
 
           gameStartFenRef.current = event.initialFen;
@@ -1317,6 +1300,9 @@ function reconcilePremoves(nextFen, newMoves) {
             takebackPendingRef.current = false;
             setTakebackPending(false);
             setTakebackOffer(false);
+            drawPendingRef.current = false;
+            setDrawPending(false);
+            setDrawOffer(false);
           } else {
             setDrawOffer(Boolean(opponentDrawOffer));
             drawPendingRef.current = Boolean(ownDrawOffer);
@@ -1464,7 +1450,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
     // 1. Send the matchmaking message FIRST while the socket is perfectly stable
     socketRef.current.send(JSON.stringify({ type: 'matchmaking.start', attemptId }));
-    console.log("Sent matchmaking.start");
     setMatchmaking(true);
     setGameStatus('Searching for an opponent...');
     setGameEndMessage(null);
