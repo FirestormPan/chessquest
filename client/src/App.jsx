@@ -65,6 +65,8 @@ function App() {
 
   const [confirmResign, setConfirmResign] = useState(false);
 
+  const [gameEndMessage, setGameEndMessage] = useState(null);
+
   const moveCountRef = useRef(0);
   const lastClickRef = useRef({ square: null, time: 0 });
   const suppressPieceClickRef = useRef(false);
@@ -169,6 +171,13 @@ function App() {
       ...current,           // keep preferences
       status: 'idle',
     }));
+  }
+
+  function endBotGame(message) {
+    botSearchControllerRef.current?.abort();
+    setBotGame((current) => ({ ...current, status: 'ended' }));
+    setGameStatus(message);
+    setGameEndMessage(message);
   }
 
   const [reviewPly, setReviewPly] = useState(null);
@@ -595,10 +604,7 @@ function reconcilePremoves(nextFen, newMoves) {
     if (gameMode === GAME_MODE.BOT) {
       if (botGame.status !== 'playing') return;
 
-      botSearchControllerRef.current?.abort();
-
-      setBotGame((current) => ({ ...current, status: 'ended' }))
-      setGameStatus('You resigned. Bot wins.');
+      endBotGame('You resigned. Bot wins.');
       setConfirmResign(false);
 
       return;
@@ -817,11 +823,18 @@ function reconcilePremoves(nextFen, newMoves) {
       message = 'Draw.';
     }
 
-    botSearchControllerRef.current?.abort();
-
-    setBotGame((current) => ({ ...current, status: 'ended' }))
-    setGameStatus(message);
+    endBotGame(message);
   },[fen, gameMode, botGame.status]);
+
+  useEffect(() => {
+    if (!gameEndMessage) return undefined;
+    
+    const timer = setTimeout(() => {
+      setGameEndMessage(null);
+    }, 3000);
+    
+    return () => clearTimeout(timer);
+  }, [gameEndMessage]);
 
   useEffect(() => {
     premoveQueueRef.current = premoveQueue;
@@ -1183,7 +1196,6 @@ function reconcilePremoves(nextFen, newMoves) {
 
         if (event.type === 'gameFull') {
 
-
           console.log("GAMEFULL RECEIVED", event);
 
           const color = event.white?.id?.toLowerCase() === account.username?.toLowerCase() ? 'w' : 'b';
@@ -1255,6 +1267,7 @@ function reconcilePremoves(nextFen, newMoves) {
             ]);
 
             setGameStatus(result);
+            setGameEndMessage(result);
 
             localStorage.removeItem('chessquest:active-game');
 
@@ -1374,6 +1387,8 @@ function reconcilePremoves(nextFen, newMoves) {
 
             setGameStatus(result);
 
+            setGameEndMessage(result);
+
             localStorage.removeItem('chessquest:active-game');
 
             setOpponentGone(false);
@@ -1452,6 +1467,7 @@ function reconcilePremoves(nextFen, newMoves) {
     console.log("Sent matchmaking.start");
     setMatchmaking(true);
     setGameStatus('Searching for an opponent...');
+    setGameEndMessage(null);
 
     // 2. Start the fetch
     const startPromise = fetch('/api/game/start', {
@@ -1519,6 +1535,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setReviewPly(null);
 
     uciHistoryRef.current = [];
+    setGameEndMessage(null);
 
     clearSelection();
     closePromotionChoice();
@@ -1693,6 +1710,7 @@ function reconcilePremoves(nextFen, newMoves) {
     setMoveHistory([]);
     setReviewPly(null);
     uciHistoryRef.current = [];
+    setGameEndMessage(null);
 
     clearSelection();
     closePromotionChoice();
@@ -2576,6 +2594,11 @@ function reconcilePremoves(nextFen, newMoves) {
               </div>
 
               <div className="board-column">
+                {gameEndMessage && (
+                  <div className="game-end-overlay">
+                    <span>{gameEndMessage}</span>
+                  </div>
+                )}
                 <ChessBoard
                   game={displayGame}
                   boardFiles={boardFiles}
