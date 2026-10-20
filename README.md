@@ -1,4 +1,4 @@
-# ChessQuest backend
+# ChessQuest V1
 
 Express and WebSocket backend foundation for the ChessQuest Lichess UI.
 
