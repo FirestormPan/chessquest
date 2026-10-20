@@ -2463,9 +2463,6 @@ function reconcilePremoves(nextFen, newMoves) {
                 <strong>
                   {account.username}
                 </strong>{' '}
-                (
-                {account.perfs.rapid.rating || 'unrated'}
-                )
               </span>
 
               <button
@@ -2482,7 +2479,7 @@ function reconcilePremoves(nextFen, newMoves) {
               type="button"
               onClick={handleLogin}
             >
-              Connect Lichess
+              Sign-in with Lichess
             </button>
           )}
         </div>

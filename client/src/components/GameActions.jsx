@@ -26,6 +26,10 @@ export default function GameActions({
   gameRated,
   onTakeback,
 }) {
+  const showClaimVictory = canClaimVictory && opponentGone && gameStatus === 'started';
+  
+  const showTakeback = !gameRated;
+
   return (
     <div className="game-actions" aria-label="Game actions">
       {!gameId && (
@@ -35,7 +39,7 @@ export default function GameActions({
           disabled={!socketReady || cancellingMatchmaking}
         >
           {!socketReady
-            ? 'Connect to play'
+            ? 'Sign in to play'
             : cancellingMatchmaking
               ? 'Cancelling...'
               : phase === GAME_PHASE.SEARCHING
@@ -50,58 +54,60 @@ export default function GameActions({
             {drawOffer ? 'Accept draw' : drawPending ? 'Cancel draw offer' : 'Offer draw'}
           </button>
 
-          {!gameRated && (
-            <>
-              {takebackOffer ? (
+          {(showTakeback || showClaimVictory) && (
+            <div className="game-actions-row">
+              {showTakeback && (
                 <>
-                  <button
-                    className="account-button"
-                    type="button"
-                    onClick={() => onTakeback('accept')}
-                  >
-                    Accept takeback
-                  </button>
-                  <button
-                    className="account-button secondary"
-                    type="button"
-                    onClick={() => onTakeback('decline')}
-                  >
-                    Decline takeback
-                  </button>
+                  {takebackOffer ? (
+                    <>
+                      <button
+                        className="account-button"
+                        type="button"
+                        onClick={() => onTakeback('accept')}
+                      >
+                        Accept takeback
+                      </button>
+                      <button
+                        className="account-button secondary"
+                        type="button"
+                        onClick={() => onTakeback('decline')}
+                      >
+                        Decline
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="account-button"
+                      type="button"
+                      onClick={() => onTakeback('offer')}
+                      disabled={takebackPending}
+                    >
+                      {takebackPending ? 'Takeback offered' : 'Offer takeback'}
+                    </button>
+                  )}
                 </>
-              ) : (
+              )}
+
+              {showClaimVictory && (
                 <button
                   className="account-button"
                   type="button"
-                  onClick={() => onTakeback('offer')}
-                  disabled={takebackPending}
+                  onClick={onClaimVictory}
+                  disabled={claimPending || claimWinInSeconds > 0}
                 >
-                  {takebackPending ? 'Takeback offered' : 'Offer takeback'}
+                  {claimPending
+                    ? 'Claiming…'
+                    : claimWinInSeconds > 0
+                      ? `Claim in ${claimWinInSeconds}s`
+                      : 'Claim victory'}
                 </button>
               )}
-            </>
+            </div>
           )}
 
           <button className="account-button danger" type="button" onClick={onResign}>
             {confirmResign ? 'Sure?' : 'Resign'}
           </button>
-
-          {canClaimVictory &&
-            opponentGone &&
-            gameStatus === 'started' && (
-              <button
-                className="account-button"
-                type="button"
-                onClick={onClaimVictory}
-                disabled={claimPending || claimWinInSeconds > 0}
-              >
-                {claimPending
-                  ? 'Claiming…'
-                  : claimWinInSeconds > 0
-                    ? `Claim victory in ${claimWinInSeconds}s`
-                    : 'Claim victory'}
-              </button>
-            )}
         </>
       )}
     </div>

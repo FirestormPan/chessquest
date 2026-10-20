@@ -27,9 +27,6 @@ export default function ChatBody({
       </div>
 
       <form className="chat-form" onSubmit={onSubmit}>
-        <label className="sr-only" htmlFor="chat-message">
-          Chat message
-        </label>
         <input
           id="chat-message"
           type="text"

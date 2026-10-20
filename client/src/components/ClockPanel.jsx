@@ -38,7 +38,7 @@ export default function ClockPanel({
                 <PieceVisual
                   color="b"
                   type={piece}
-                  skinFolder={getSkinFolderForColor('b')}
+                  // skinFolder={getSkinFolderForColor('b')}
                 />
               </span>
             ))}
@@ -65,7 +65,7 @@ export default function ClockPanel({
                 <PieceVisual
                   color="w"
                   type={piece}
-                  skinFolder={getSkinFolderForColor('w')}
+                  // skinFolder={getSkinFolderForColor('w')}
                 />
               </span>
             ))}
