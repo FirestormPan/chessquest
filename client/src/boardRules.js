@@ -48,16 +48,6 @@ function applyMoves(initialFen, moves) {
   return nextGame.fen();
 }
 
-// function applyMoves(initialFen, moves) {
-//   const nextGame = new Chess(normalizeFen(initialFen));
-
-//   for (const uci of parseUciMoves(moves)) {
-//     nextGame.move(makeMoveFromUci(uci));
-//   }
-
-//   return nextGame.fen();
-// }
-
 function getCapturedPieces(initialFen, moves) {
   const nextGame = new Chess(normalizeFen(initialFen));
   const captured = { w: [], b: [] };
@@ -144,6 +134,7 @@ function getPremoveMovesForPiece(fen, square, color) {
   for (const row of position.board()) {
     for (const dest of row) {
       if (!dest || dest.color !== color) continue;
+      if (dest.type === 'k') continue;
 
       const destSquare = dest.square;
       const key = destSquare;
