@@ -354,7 +354,7 @@ export default function RightRail({
             getSkinFolderForColor={getSkinFolderForColor}
           />
         )
-      ) : phase=== GAME_PHASE.SEARCHING ? <p>Searching for a game...</p> : (
+      ) : phase=== GAME_PHASE.SEARCHING ? <p>Searching for a game... (~ { 20 + Math.random*10 } s)</p> : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}

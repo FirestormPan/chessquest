@@ -2,6 +2,8 @@
 
 Express and WebSocket backend foundation for the ChessQuest Lichess UI.
 
+https://chessquest-fawn.vercel.app/
+
 ## Run
 
 ```powershell
