@@ -858,6 +858,11 @@ h1 {
   height: 1rem;
 }
 
+.you-tag {
+  color: var(--brass-bright);
+  font-weight: 600;
+  margin-left: 0.2rem;
+}
 /* ---------- Board ---------- */
 
 .board {

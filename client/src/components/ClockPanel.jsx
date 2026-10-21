@@ -16,6 +16,7 @@ export default function ClockPanel({
   turn,
   capturedPieces,
   getSkinFolderForColor,
+  playerColor,
 }) {
   return (
     <div className="clock-panel" aria-label="Time remaining">
@@ -24,7 +25,9 @@ export default function ClockPanel({
           whiteTime < 30000 ? 'low-time' : ''
         }`}
       >
-        <span className="clock-player">White</span>
+        <span className="clock-player">
+          White {playerColor === 'w' && <span className="you-tag">(You)</span>}
+        </span>
 
         <strong>{formatClock(whiteTime)}</strong>
 
@@ -51,7 +54,9 @@ export default function ClockPanel({
           blackTime < 30000 ? 'low-time' : ''
         }`}
       >
-        <span className="clock-player">Black</span>
+        <span className="clock-player">
+          Black {playerColor === 'b' && <span className="you-tag">(You)</span>}
+        </span>
 
         <strong>{formatClock(blackTime)}</strong>
 

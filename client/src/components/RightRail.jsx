@@ -6,6 +6,7 @@ import ChatBody from './ChatBody';
 import GameActions from './GameActions';
 import { BOT_STRENGTHS } from '../botEngine';
 import PieceVisual from './PieceVisual';
+import { useRef } from 'react';
 
 export default function RightRail({
   view,
@@ -89,6 +90,7 @@ export default function RightRail({
     strength: botStrength,
     colorMode: botColorMode,
   } = botGame;
+  const estimatedWait = useRef( Math.floor(20 + Math.random() * 10));
   if(view === 'info') {
     return (
       <div className="game-info" aria-label="Game information">
@@ -352,9 +354,10 @@ export default function RightRail({
             turn={clockSnapshot.turn}
             capturedPieces={capturedPieces}
             getSkinFolderForColor={getSkinFolderForColor}
+            playerColor={playerColor}
           />
         )
-      ) : phase=== GAME_PHASE.SEARCHING ? <p>Searching for a game... (~ { 20 + Math.random*10 } s)</p> : (
+      ) : phase=== GAME_PHASE.SEARCHING ? <p>Searching for a game... (~ {estimatedWait} s)</p> : (
         <TimeControlPicker
           value={selectedTimeControl}
           onChange={setSelectedTimeControl}
