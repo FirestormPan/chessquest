@@ -6,7 +6,7 @@ import ChatBody from './ChatBody';
 import GameActions from './GameActions';
 import { BOT_STRENGTHS } from '../botEngine';
 import PieceVisual from './PieceVisual';
-import { useRef } from 'react';
+import { useState } from 'react';
 
 export default function RightRail({
   view,
