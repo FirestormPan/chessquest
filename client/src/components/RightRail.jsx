@@ -90,7 +90,7 @@ export default function RightRail({
     strength: botStrength,
     colorMode: botColorMode,
   } = botGame;
-  const estimatedWait = useRef( Math.floor(20 + Math.random() * 10));
+  const [estimatedWait] = useState(() => Math.floor(20 + Math.random() * 10));
   if(view === 'info') {
     return (
       <div className="game-info" aria-label="Game information">
