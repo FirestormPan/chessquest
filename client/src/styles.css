@@ -188,6 +188,16 @@ h1 {
   border-color: var(--brass);
   color: var(--brass-bright);
 }
+.account-button.secondary.active {
+  background: linear-gradient(180deg, #d9b665 0%, #a9822f 100%);
+  border-color: var(--brass-bright);
+  color: #1a1208; /* Dark text to contrast with the gold */
+  box-shadow: inset 0 1px 0 rgba(255, 240, 200, 0.35), 0 2px 0 #4a3413;
+}
+
+.account-button.secondary.active:hover {
+  background: linear-gradient(180deg, #eccb7c 0%, #c39a43 100%);
+}
 
 .account-button.danger {
   background: linear-gradient(180deg, #3a1a16 0%, #24100c 100%);

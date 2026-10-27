@@ -2489,7 +2489,9 @@ function reconcilePremoves(nextFen, newMoves) {
           aria-label="Right rail view"
         >
           <button
-            className="account-button secondary"
+            className={`account-button secondary ${
+              rightRailView === 'select-skin' ? 'active' : ''
+            }`}
             type="button"
             onClick={() =>
               setRightRailView('select-skin')
@@ -2499,7 +2501,12 @@ function reconcilePremoves(nextFen, newMoves) {
           </button>
 
           <button
-            className="account-button secondary"
+            className={`account-button secondary ${
+              gameMode === GAME_MODE.LICHESS ||
+              (rightRailView === 'game' && gameMode !== GAME_MODE.BOT)
+                ? 'active'
+                : ''
+            }`}
             type="button"
             disabled={botGame.status === 'playing'}
             onClick={() => {
@@ -2513,15 +2520,25 @@ function reconcilePremoves(nextFen, newMoves) {
           </button>
 
           <button
-            className="account-button secondary"
+            className={`account-button secondary ${
+              gameMode === GAME_MODE.BOT || rightRailView === 'bot'
+                ? 'active'
+                : ''
+            }`}
             type="button"
+            disabled={
+              matchmaking || 
+              gameMode === GAME_MODE.LICHESS
+            }
             onClick={() => setRightRailView(botGame.status === 'playing' ? 'game' : 'bot')}
           >
             Vs Bot
           </button>
 
           <button
-            className="account-button secondary"
+            className={`account-button secondary ${
+              rightRailView === 'info' ? 'active' : ''
+            }`}
             type="button"
             onClick={() =>
               setRightRailView('info')
